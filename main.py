@@ -17,6 +17,9 @@ from pathlib import Path
 # Asegurar que los módulos del proyecto están en el path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Crear directorio de datos antes de configurar el log
+Path("data").mkdir(exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
