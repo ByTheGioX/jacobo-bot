@@ -47,8 +47,9 @@ class Property:
 
 
 class IdealistaScraper:
-    def __init__(self, delay_range: tuple[float, float] = (2.0, 5.0)):
+    def __init__(self, delay_range: tuple[float, float] = (2.0, 5.0), headless: bool = True):
         self.delay_range = delay_range
+        self.headless = headless
         self._browser = None
         self._page = None
 
@@ -59,7 +60,7 @@ class IdealistaScraper:
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
-            headless=True,
+            headless=self.headless,
             args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
         )
         context = self._browser.new_context(
@@ -71,7 +72,6 @@ class IdealistaScraper:
             locale="es-ES",
             viewport={"width": 1366, "height": 768},
         )
-        # Ocultar que es Playwright
         context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         """)
@@ -86,15 +86,14 @@ class IdealistaScraper:
     def _get_html(self, url: str, retries: int = 3) -> Optional[str]:
         for attempt in range(retries):
             try:
-                self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                # Esperar a que cargue contenido real
-                self._page.wait_for_timeout(random.randint(1500, 3000))
+                self._page.goto(url, wait_until="networkidle", timeout=45000)
+                # Esperar a que el JS renderice el contenido
+                self._page.wait_for_timeout(random.randint(2000, 4000))
                 html = self._page.content()
-                # Verificar que no estamos en página de bloqueo
-                if "idealista" in html.lower() and "inmueble" in html.lower() or "pro/" in url:
+                if html and len(html) > 5000:
                     return html
                 if attempt < retries - 1:
-                    logger.warning("Página vacía en %s, reintentando...", url)
+                    logger.warning("Página incompleta en %s, reintentando...", url)
                     time.sleep(5)
             except Exception as e:
                 logger.error("Error cargando %s (intento %d): %s", url, attempt + 1, e)
@@ -181,27 +180,38 @@ class IdealistaScraper:
     # ------------------------------------------------------------------
 
     def _parse_listing_page(self, soup: BeautifulSoup) -> list[str]:
-        urls: list[str] = []
-
-        for article in soup.select("article.item"):
-            link = article.select_one("a.item-link")
-            if link and link.get("href"):
-                href = link["href"]
-                if not href.startswith("http"):
-                    href = urljoin(BASE_URL, href)
-                urls.append(href)
-
-        # Fallback: cualquier enlace con patrón /inmueble/ID/
-        if not urls:
+        # Extraer URLs directamente del navegador con JS — más fiable que parsear HTML
+        try:
+            hrefs: list[str] = self._page.evaluate("""
+                () => {
+                    const links = Array.from(document.querySelectorAll('a[href]'));
+                    return links
+                        .map(a => a.href)
+                        .filter(h => h.includes('/inmueble/'));
+                }
+            """)
             seen: set[str] = set()
-            for a in soup.find_all("a", href=re.compile(r"/inmueble/\d+")):
-                href = a["href"]
-                if not href.startswith("http"):
-                    href = urljoin(BASE_URL, href)
+            urls: list[str] = []
+            for href in hrefs:
                 if href not in seen:
                     seen.add(href)
                     urls.append(href)
+            if urls:
+                logger.info("Encontradas %d propiedades en esta página", len(urls))
+                return urls
+        except Exception as e:
+            logger.warning("JS eval falló, usando BeautifulSoup: %s", e)
 
+        # Fallback: BeautifulSoup
+        seen = set()
+        urls = []
+        for a in soup.find_all("a", href=re.compile(r"/inmueble/\d+")):
+            href = a["href"]
+            if not href.startswith("http"):
+                href = urljoin(BASE_URL, href)
+            if href not in seen:
+                seen.add(href)
+                urls.append(href)
         return urls
 
     # ------------------------------------------------------------------

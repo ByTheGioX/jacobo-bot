@@ -43,6 +43,7 @@ def main():
     parser.add_argument("--email", metavar="EMAIL", default="", help="Email del comprador para --search")
     parser.add_argument("--name", metavar="NAME", default="", help="Nombre del comprador para --search")
     parser.add_argument("--dashboard", action="store_true", help="Mostrar estadísticas")
+    parser.add_argument("--show-browser", action="store_true", help="Mostrar el navegador mientras scrapea (útil para depurar)")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -55,7 +56,7 @@ def main():
         return
 
     if args.scrape_only:
-        _run_scrape_only()
+        _run_scrape_only(show_browser=args.show_browser)
         return
 
     if args.once:
@@ -102,9 +103,9 @@ def _handle_search(query: str, email: str, name: str):
     return result
 
 
-def _run_scrape_only():
+def _run_scrape_only(show_browser: bool = False):
     from scraper.idealista_scraper import IdealistaScraper
-    scraper = IdealistaScraper()
+    scraper = IdealistaScraper(headless=not show_browser)
     props = scraper.scrape_all_profiles()
     logger.info(f"Propiedades scrapeadas: {len(props)}")
     for p in props:
