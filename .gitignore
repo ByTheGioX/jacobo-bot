@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Variables de entorno (nunca subir al repo)
+.env
+
+# Datos generados por el bot
+data/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
