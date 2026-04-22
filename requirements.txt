@@ -1,0 +1,16 @@
+# Web scraping
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# Scheduling
+APScheduler==3.10.4
+
+# Environment
+python-dotenv==1.0.1
+
+# AI (opcional — para búsqueda inteligente con Claude)
+anthropic==0.40.0
+
+# Tipado y utilidades
+typing_extensions==4.12.2
