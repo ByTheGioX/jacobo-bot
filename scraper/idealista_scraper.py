@@ -1,6 +1,6 @@
 """
 Scraper para perfiles de agencias en Idealista.
-Extrae listados de propiedades de URLs de perfil configuradas.
+Usa Playwright (navegador real headless) para evitar bloqueos 403.
 
 Para añadir nuevos perfiles, edita IDEALISTA_PROFILE_URLS en .env
 """
@@ -14,10 +14,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin
 
-import requests
 from bs4 import BeautifulSoup
 
-from config.settings import SCRAPER_HEADERS, IDEALISTA_PROFILE_URLS
+from config.settings import IDEALISTA_PROFILE_URLS
 
 logger = logging.getLogger(__name__)
 
@@ -49,33 +48,65 @@ class Property:
 
 class IdealistaScraper:
     def __init__(self, delay_range: tuple[float, float] = (2.0, 5.0)):
-        self.session = requests.Session()
-        self.session.headers.update(SCRAPER_HEADERS)
         self.delay_range = delay_range
+        self._browser = None
+        self._page = None
 
     def _sleep(self):
         time.sleep(random.uniform(*self.delay_range))
 
-    def _get(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
+    def _start_browser(self):
+        from playwright.sync_api import sync_playwright
+        self._pw = sync_playwright().start()
+        self._browser = self._pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+        )
+        context = self._browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="es-ES",
+            viewport={"width": 1366, "height": 768},
+        )
+        # Ocultar que es Playwright
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        """)
+        self._page = context.new_page()
+
+    def _stop_browser(self):
+        if self._browser:
+            self._browser.close()
+        if self._pw:
+            self._pw.stop()
+
+    def _get_html(self, url: str, retries: int = 3) -> Optional[str]:
         for attempt in range(retries):
             try:
-                resp = self.session.get(url, timeout=30)
-                if resp.status_code == 200:
-                    return BeautifulSoup(resp.text, "lxml")
-                if resp.status_code == 429:
-                    wait = 60 * (attempt + 1)
-                    logger.warning("Rate limited (429). Esperando %ds...", wait)
-                    time.sleep(wait)
-                elif resp.status_code == 403:
-                    logger.warning("403 en %s — posible bloqueo de IP.", url)
-                    return None
-                else:
-                    logger.warning("HTTP %d en %s", resp.status_code, url)
-            except requests.RequestException as e:
-                wait = 5 * (attempt + 1)
-                logger.error("Error de red en %s (intento %d): %s", url, attempt + 1, e)
-                time.sleep(wait)
+                self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                # Esperar a que cargue contenido real
+                self._page.wait_for_timeout(random.randint(1500, 3000))
+                html = self._page.content()
+                # Verificar que no estamos en página de bloqueo
+                if "idealista" in html.lower() and "inmueble" in html.lower() or "pro/" in url:
+                    return html
+                if attempt < retries - 1:
+                    logger.warning("Página vacía en %s, reintentando...", url)
+                    time.sleep(5)
+            except Exception as e:
+                logger.error("Error cargando %s (intento %d): %s", url, attempt + 1, e)
+                if attempt < retries - 1:
+                    time.sleep(5 * (attempt + 1))
         return None
+
+    def _get_soup(self, url: str) -> Optional[BeautifulSoup]:
+        html = self._get_html(url)
+        if html is None:
+            return None
+        return BeautifulSoup(html, "lxml")
 
     # ------------------------------------------------------------------
     # API pública
@@ -89,7 +120,7 @@ class IdealistaScraper:
 
         while True:
             url = self._profile_page_url(profile_url, page)
-            soup = self._get(url)
+            soup = self._get_soup(url)
             if soup is None:
                 break
 
@@ -117,11 +148,16 @@ class IdealistaScraper:
         if not IDEALISTA_PROFILE_URLS:
             logger.warning("IDEALISTA_PROFILE_URLS está vacío en .env")
             return []
-        all_props: list[Property] = []
-        for url in IDEALISTA_PROFILE_URLS:
-            logger.info("--- Perfil: %s ---", url)
-            all_props.extend(self.scrape_profile(url))
-        return all_props
+
+        self._start_browser()
+        try:
+            all_props: list[Property] = []
+            for url in IDEALISTA_PROFILE_URLS:
+                logger.info("--- Perfil: %s ---", url)
+                all_props.extend(self.scrape_profile(url))
+            return all_props
+        finally:
+            self._stop_browser()
 
     # ------------------------------------------------------------------
     # Paginación
@@ -136,7 +172,6 @@ class IdealistaScraper:
 
     @staticmethod
     def _has_next_page(soup: BeautifulSoup) -> bool:
-        # rel="next" es el indicador más fiable
         if soup.find("link", {"rel": "next"}):
             return True
         return bool(soup.select_one("a.icon-arrow-right-after"))
@@ -175,7 +210,7 @@ class IdealistaScraper:
 
     def _scrape_property(self, url: str) -> Optional[Property]:
         logger.info("  → Propiedad: %s", url)
-        soup = self._get(url)
+        soup = self._get_soup(url)
         if soup is None:
             return None
 
@@ -209,32 +244,22 @@ class IdealistaScraper:
     # ------------------------------------------------------------------
 
     def _extract_photos(self, soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
-        # 1. JSON embebido en scripts JS (más fiable, Idealista carga galería así)
         urls, flags = self._photos_from_embedded_json(soup)
         if urls:
             return urls, flags
-
-        # 2. HTML de la galería
         urls, flags = self._photos_from_html_gallery(soup)
         if urls:
             return urls, flags
-
-        # 3. JSON-LD estructurado
         return self._photos_from_jsonld(soup)
 
     @staticmethod
     def _photos_from_embedded_json(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
-        """
-        Idealista embebe los datos de la propiedad en variables JS.
-        Buscamos arrays de imágenes en esos objetos.
-        """
         urls: list[str] = []
         is_plan: list[bool] = []
 
         for script in soup.find_all("script", string=True):
             text = script.string or ""
 
-            # Patrón: "images":[{"url":"...","tag":"..."},...]
             m = re.search(r'"images"\s*:\s*(\[.*?\])', text, re.DOTALL)
             if m:
                 try:
@@ -252,7 +277,6 @@ class IdealistaScraper:
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Patrón alternativo: "photos":["url1","url2",...]
             m = re.search(r'"photos"\s*:\s*(\[(?:"[^"]+",?\s*)+\])', text)
             if m:
                 try:
@@ -273,15 +297,13 @@ class IdealistaScraper:
         urls: list[str] = []
         is_plan: list[bool] = []
 
-        gallery_selectors = [
+        for selector in [
             "picture.gallery-image source",
             "img.gallery-image",
             "div.gallery img",
             "div[class*='gallery'] img",
             "li.step img",
-        ]
-
-        for selector in gallery_selectors:
+        ]:
             for el in soup.select(selector):
                 src = ""
                 if el.name == "source":
@@ -290,17 +312,14 @@ class IdealistaScraper:
                     src = parts[-1].split(" ")[0] if parts else ""
                 else:
                     src = el.get("src") or el.get("data-src") or ""
-
                 src = _normalize_image_url(src)
                 alt = (el.get("alt") or "").lower()
                 if src and src.startswith("http"):
                     urls.append(src)
                     is_plan.append("plano" in alt or "floor" in alt)
-
             if urls:
                 break
 
-        # Imágenes de planos en sección separada
         for img in soup.select("img[alt*='plano'], img[alt*='Plano'], img.floor-plan"):
             src = _normalize_image_url(img.get("src", ""))
             if src and src not in urls:
@@ -360,14 +379,13 @@ class IdealistaScraper:
         return int(digits) if digits else None
 
     def _parse_features(self, soup: BeautifulSoup, prop: Property):
-        feature_selectors = [
+        items: list[str] = []
+        for sel in [
             "div.details-property_features ul li",
             "div.details-property-feature-one ul li",
             "ul.details-property_features li",
             "div[class*='feature'] li",
-        ]
-        items: list[str] = []
-        for sel in feature_selectors:
+        ]:
             els = soup.select(sel)
             if els:
                 items = [el.get_text(strip=True) for el in els]
@@ -375,29 +393,24 @@ class IdealistaScraper:
 
         for text in items:
             lower = text.lower()
-
             if not prop.area_m2:
                 m = re.search(r"(\d+(?:[.,]\d+)?)\s*m²", lower)
                 if m:
                     prop.area_m2 = float(m.group(1).replace(",", "."))
-
             if not prop.rooms:
                 m = re.search(r"(\d+)\s*(?:dormitorio|habitaci[oó]n|cuarto)", lower)
                 if m:
                     prop.rooms = int(m.group(1))
-
             if not prop.bathrooms:
                 m = re.search(r"(\d+)\s*ba[ñn]o", lower)
                 if m:
                     prop.bathrooms = int(m.group(1))
-
             if "parking" in lower or "garaje" in lower or "plaza de" in lower:
                 prop.has_parking = True
             if "piscina" in lower:
                 prop.has_pool = True
             if "terraza" in lower or "balc" in lower:
                 prop.has_terrace = True
-
             if not prop.floor:
                 m = re.search(r"planta\s+(\w+)", lower)
                 if m:
@@ -431,10 +444,6 @@ class IdealistaScraper:
 # ------------------------------------------------------------------
 
 def _normalize_image_url(url: str) -> str:
-    """
-    Obtiene la versión de mayor calidad de una URL de imagen de Idealista
-    eliminando los sufijos de resolución del path.
-    """
     if not url:
         return ""
     url = url.strip()

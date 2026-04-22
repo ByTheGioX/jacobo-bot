@@ -3,6 +3,9 @@ requests==2.32.3
 beautifulsoup4==4.12.3
 lxml==5.2.2
 
+# Scraping con navegador real (evita bloqueos 403 de Idealista)
+playwright==1.44.0
+
 # Scheduling
 APScheduler==3.10.4
 
