@@ -23,7 +23,8 @@ IDEALISTA_PROFILE_URLS: list[str] = _list("IDEALISTA_PROFILE_URLS")
 
 # Kie.ai
 KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
-KIE_AI_BASE_URL: str = os.getenv("KIE_AI_BASE_URL", "https://api.kie.ai/v1")
+# Número máximo de fotos normales a procesar por propiedad (planos siempre se conservan aparte)
+MAX_PHOTOS_PER_PROPERTY: int = int(os.getenv("MAX_PHOTOS_PER_PROPERTY", "15"))
 
 # WordPress
 WP_URL: str = os.getenv("WP_URL", "").rstrip("/")
