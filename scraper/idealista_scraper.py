@@ -1,12 +1,12 @@
 """
 Scraper para perfiles de agencias en Idealista.
-Usa Playwright + stealth para evitar bloqueos 403 y captchas DataDome.
+Usa Playwright + stealth + comportamiento humano para evitar detección.
 
-Cuando aparece el captcha:
-  - Con --show-browser: el bot pausa y esperas resolverte manualmente
-  - Sin --show-browser: el bot reintenta con mayor espera
+Cuando aparece captcha DataDome:
+  - Con --show-browser: pausa y resuelves manualmente, luego ENTER
+  - Sin --show-browser: espera 60s y reintenta
 
-Para añadir nuevos perfiles, edita IDEALISTA_PROFILE_URLS en .env
+Para añadir perfiles: edita IDEALISTA_PROFILE_URLS en .env
 """
 
 import json
@@ -32,6 +32,16 @@ _CAPTCHA_SIGNALS = [
     "datadome",
     "recibiendo muchas peticiones",
     "asegurar tu acceso",
+]
+
+# Selectores del botón de aceptar cookies de Idealista
+_COOKIE_SELECTORS = [
+    "#didomi-notice-agree-button",
+    "button[id*='accept']",
+    "button[class*='accept']",
+    "button:has-text('Aceptar todo')",
+    "button:has-text('Aceptar')",
+    "#onetrust-accept-btn-handler",
 ]
 
 
@@ -64,14 +74,50 @@ class Property:
 
 
 class IdealistaScraper:
-    def __init__(self, delay_range: tuple[float, float] = (3.0, 7.0), headless: bool = True):
+    def __init__(self, delay_range: tuple[float, float] = (8.0, 18.0), headless: bool = True):
         self.delay_range = delay_range
         self.headless = headless
         self._browser = None
         self._page = None
+        self._cookies_accepted = False
 
     def _sleep(self):
-        time.sleep(random.uniform(*self.delay_range))
+        """Pausa aleatoria larga para simular navegación humana."""
+        t = random.uniform(*self.delay_range)
+        logger.debug("Esperando %.1fs...", t)
+        time.sleep(t)
+
+    def _human_scroll(self):
+        """Scroll natural por la página."""
+        try:
+            height = self._page.evaluate("document.body.scrollHeight")
+            steps = random.randint(3, 6)
+            for i in range(steps):
+                y = int((height / steps) * (i + 1) * random.uniform(0.7, 1.0))
+                self._page.evaluate(f"window.scrollTo(0, {y})")
+                time.sleep(random.uniform(0.4, 1.2))
+            # Volver un poco arriba (como haría un humano)
+            self._page.evaluate(f"window.scrollTo(0, {random.randint(100, 400)})")
+            time.sleep(random.uniform(0.3, 0.8))
+        except Exception:
+            pass
+
+    def _accept_cookies(self):
+        """Acepta el popup de cookies si aparece."""
+        if self._cookies_accepted:
+            return
+        try:
+            for sel in _COOKIE_SELECTORS:
+                btn = self._page.query_selector(sel)
+                if btn and btn.is_visible():
+                    time.sleep(random.uniform(1.0, 2.5))  # Pausa antes de hacer clic
+                    btn.click()
+                    logger.info("Cookies aceptadas automáticamente")
+                    self._cookies_accepted = True
+                    time.sleep(random.uniform(1.5, 3.0))
+                    return
+        except Exception as e:
+            logger.debug("No se encontró popup de cookies: %s", e)
 
     def _start_browser(self):
         from playwright.sync_api import sync_playwright
@@ -90,7 +136,6 @@ class IdealistaScraper:
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--disable-infobars",
-                "--start-maximized",
             ],
         )
         context = self._browser.new_context(
@@ -123,7 +168,6 @@ class IdealistaScraper:
             pass
 
     def _handle_captcha(self, url: str):
-        """Pausa cuando detecta captcha DataDome."""
         if not self.headless:
             logger.warning("\n" + "="*60)
             logger.warning("CAPTCHA detectado en: %s", url)
@@ -131,25 +175,32 @@ class IdealistaScraper:
             logger.warning("Luego vuelve aquí y pulsa ENTER para continuar...")
             logger.warning("="*60)
             input("  >> Pulsa ENTER cuando hayas resuelto el captcha: ")
-            # Esperar a que la página cargue tras el captcha
             self._page.wait_for_timeout(3000)
         else:
-            logger.warning("Captcha detectado. Esperando 60s antes de reintentar...")
+            logger.warning("Captcha detectado. Esperando 90s antes de reintentar...")
             logger.warning("Tip: usa --show-browser para resolverlo manualmente")
-            time.sleep(60)
+            time.sleep(90)
 
     def _get_html(self, url: str, retries: int = 3) -> Optional[str]:
         for attempt in range(retries):
             try:
                 self._page.goto(url, wait_until="networkidle", timeout=45000)
-                self._page.wait_for_timeout(random.randint(2000, 4000))
+                # Pausa inicial para que cargue todo el JS
+                time.sleep(random.uniform(2.5, 4.5))
+
+                # Aceptar cookies si aparece el popup
+                self._accept_cookies()
+
+                # Scroll humano
+                self._human_scroll()
+
                 html = self._page.content()
 
                 if _is_captcha(html):
                     self._handle_captcha(url)
-                    # Reintentar tras resolver captcha
                     self._page.goto(url, wait_until="networkidle", timeout=45000)
-                    self._page.wait_for_timeout(3000)
+                    time.sleep(3)
+                    self._accept_cookies()
                     html = self._page.content()
 
                 if html and len(html) > 5000 and not _is_captcha(html):
@@ -157,11 +208,11 @@ class IdealistaScraper:
 
                 if attempt < retries - 1:
                     logger.warning("Página incompleta en %s, reintentando...", url)
-                    time.sleep(10)
+                    time.sleep(15)
             except Exception as e:
                 logger.error("Error cargando %s (intento %d): %s", url, attempt + 1, e)
                 if attempt < retries - 1:
-                    time.sleep(5 * (attempt + 1))
+                    time.sleep(10 * (attempt + 1))
         return None
 
     def _get_soup(self, url: str) -> Optional[BeautifulSoup]:
