@@ -52,6 +52,13 @@ CHECK_INTERVAL_HOURS: int = int(os.getenv("CHECK_INTERVAL_HOURS", "24"))
 # Text cleanup
 COMPETITOR_BRANDS: list[str] = _list("COMPETITOR_BRANDS")
 
+# Proxy residencial (opcional pero recomendado para evitar bloqueos de IP)
+# Formato: http://usuario:contraseña@servidor:puerto
+# Compatible con Smartproxy, BrightData, Oxylabs, etc.
+PROXY_SERVER: str = os.getenv("PROXY_SERVER", "")   # ej: http://gate.smartproxy.com:10001
+PROXY_USER: str = os.getenv("PROXY_USER", "")
+PROXY_PASSWORD: str = os.getenv("PROXY_PASSWORD", "")
+
 # Claude AI
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 

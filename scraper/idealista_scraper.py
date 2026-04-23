@@ -24,7 +24,7 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from config.settings import IDEALISTA_PROFILE_URLS
+from config.settings import IDEALISTA_PROFILE_URLS, PROXY_SERVER, PROXY_USER, PROXY_PASSWORD
 
 logger = logging.getLogger(__name__)
 
@@ -179,19 +179,30 @@ class IdealistaScraper:
     # Browser
     # ------------------------------------------------------------------
 
+    def _proxy_config(self) -> Optional[dict]:
+        """Devuelve la config de proxy si está configurada en .env, o None."""
+        if not PROXY_SERVER:
+            return None
+        cfg = {"server": PROXY_SERVER}
+        if PROXY_USER:
+            cfg["username"] = PROXY_USER
+        if PROXY_PASSWORD:
+            cfg["password"] = PROXY_PASSWORD
+        logger.info("Usando proxy residencial: %s", PROXY_SERVER)
+        return cfg
+
     def _start_browser(self):
         SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        proxy = self._proxy_config()
 
         # Intentar camoufox primero (Firefox anti-deteccion)
         try:
             from camoufox.sync_api import Camoufox
             logger.info("Usando camoufox (Firefox anti-deteccion)")
-            self._camoufox_cm = Camoufox(
-                headless=self.headless,
-                humanize=True,
-                locale="es-ES",
-                geoip=True,
-            )
+            cam_kwargs = dict(headless=self.headless, humanize=True, locale="es-ES", geoip=True)
+            if proxy:
+                cam_kwargs["proxy"] = proxy
+            self._camoufox_cm = Camoufox(**cam_kwargs)
             self._browser = self._camoufox_cm.__enter__()
             self._page = self._browser.new_page()
             self._use_camoufox = True
@@ -208,7 +219,7 @@ class IdealistaScraper:
             self._stealth_fn = None
 
         self._pw = sync_playwright().start()
-        self._context = self._pw.chromium.launch_persistent_context(
+        launch_kwargs = dict(
             user_data_dir=str(SESSION_DIR),
             headless=self.headless,
             args=[
@@ -224,6 +235,9 @@ class IdealistaScraper:
             locale="es-ES",
             viewport={"width": 1366, "height": 768},
         )
+        if proxy:
+            launch_kwargs["proxy"] = proxy
+        self._context = self._pw.chromium.launch_persistent_context(**launch_kwargs)
         self._context.add_init_script("""
             Object.defineProperty(navigator,'webdriver',{get:()=>undefined});
             Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3]});
