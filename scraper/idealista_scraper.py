@@ -1,6 +1,10 @@
 """
 Scraper para perfiles de agencias en Idealista.
-Usa Playwright (navegador real headless) para evitar bloqueos 403.
+Usa Playwright + stealth para evitar bloqueos 403 y captchas DataDome.
+
+Cuando aparece el captcha:
+  - Con --show-browser: el bot pausa y esperas resolverte manualmente
+  - Sin --show-browser: el bot reintenta con mayor espera
 
 Para añadir nuevos perfiles, edita IDEALISTA_PROFILE_URLS en .env
 """
@@ -21,6 +25,19 @@ from config.settings import IDEALISTA_PROFILE_URLS
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.idealista.com"
+
+_CAPTCHA_SIGNALS = [
+    "desliza hacia la derecha",
+    "muchas peticiones",
+    "datadome",
+    "recibiendo muchas peticiones",
+    "asegurar tu acceso",
+]
+
+
+def _is_captcha(html: str) -> bool:
+    low = html.lower()
+    return any(s in low for s in _CAPTCHA_SIGNALS)
 
 
 @dataclass
@@ -47,7 +64,7 @@ class Property:
 
 
 class IdealistaScraper:
-    def __init__(self, delay_range: tuple[float, float] = (2.0, 5.0), headless: bool = True):
+    def __init__(self, delay_range: tuple[float, float] = (3.0, 7.0), headless: bool = True):
         self.delay_range = delay_range
         self.headless = headless
         self._browser = None
@@ -58,10 +75,23 @@ class IdealistaScraper:
 
     def _start_browser(self):
         from playwright.sync_api import sync_playwright
+        try:
+            from playwright_stealth import stealth_sync
+            self._stealth = stealth_sync
+        except ImportError:
+            logger.warning("playwright-stealth no instalado. Corre: pip install playwright-stealth")
+            self._stealth = None
+
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
             headless=self.headless,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            args=[
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--disable-infobars",
+                "--start-maximized",
+            ],
         )
         context = self._browser.new_context(
             user_agent=(
@@ -71,30 +101,63 @@ class IdealistaScraper:
             ),
             locale="es-ES",
             viewport={"width": 1366, "height": 768},
+            java_script_enabled=True,
         )
         context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['es-ES', 'es'] });
+            window.chrome = { runtime: {} };
         """)
         self._page = context.new_page()
+        if self._stealth:
+            self._stealth(self._page)
 
     def _stop_browser(self):
-        if self._browser:
-            self._browser.close()
-        if self._pw:
-            self._pw.stop()
+        try:
+            if self._browser:
+                self._browser.close()
+            if self._pw:
+                self._pw.stop()
+        except Exception:
+            pass
+
+    def _handle_captcha(self, url: str):
+        """Pausa cuando detecta captcha DataDome."""
+        if not self.headless:
+            logger.warning("\n" + "="*60)
+            logger.warning("CAPTCHA detectado en: %s", url)
+            logger.warning("Resuelve el captcha en la ventana del navegador")
+            logger.warning("Luego vuelve aquí y pulsa ENTER para continuar...")
+            logger.warning("="*60)
+            input("  >> Pulsa ENTER cuando hayas resuelto el captcha: ")
+            # Esperar a que la página cargue tras el captcha
+            self._page.wait_for_timeout(3000)
+        else:
+            logger.warning("Captcha detectado. Esperando 60s antes de reintentar...")
+            logger.warning("Tip: usa --show-browser para resolverlo manualmente")
+            time.sleep(60)
 
     def _get_html(self, url: str, retries: int = 3) -> Optional[str]:
         for attempt in range(retries):
             try:
                 self._page.goto(url, wait_until="networkidle", timeout=45000)
-                # Esperar a que el JS renderice el contenido
                 self._page.wait_for_timeout(random.randint(2000, 4000))
                 html = self._page.content()
-                if html and len(html) > 5000:
+
+                if _is_captcha(html):
+                    self._handle_captcha(url)
+                    # Reintentar tras resolver captcha
+                    self._page.goto(url, wait_until="networkidle", timeout=45000)
+                    self._page.wait_for_timeout(3000)
+                    html = self._page.content()
+
+                if html and len(html) > 5000 and not _is_captcha(html):
                     return html
+
                 if attempt < retries - 1:
                     logger.warning("Página incompleta en %s, reintentando...", url)
-                    time.sleep(5)
+                    time.sleep(10)
             except Exception as e:
                 logger.error("Error cargando %s (intento %d): %s", url, attempt + 1, e)
                 if attempt < retries - 1:
@@ -112,7 +175,6 @@ class IdealistaScraper:
     # ------------------------------------------------------------------
 
     def scrape_profile(self, profile_url: str) -> list[Property]:
-        """Extrae todas las propiedades de un perfil de agencia."""
         logger.info("Scrapeando perfil: %s", profile_url)
         properties: list[Property] = []
         page = 1
@@ -143,7 +205,6 @@ class IdealistaScraper:
         return properties
 
     def scrape_all_profiles(self) -> list[Property]:
-        """Scrapea todos los perfiles configurados en IDEALISTA_PROFILE_URLS del .env."""
         if not IDEALISTA_PROFILE_URLS:
             logger.warning("IDEALISTA_PROFILE_URLS está vacío en .env")
             return []
@@ -180,7 +241,6 @@ class IdealistaScraper:
     # ------------------------------------------------------------------
 
     def _parse_listing_page(self, soup: BeautifulSoup) -> list[str]:
-        # Extraer URLs directamente del navegador con JS — más fiable que parsear HTML
         try:
             hrefs: list[str] = self._page.evaluate("""
                 () => {
@@ -202,7 +262,6 @@ class IdealistaScraper:
         except Exception as e:
             logger.warning("JS eval falló, usando BeautifulSoup: %s", e)
 
-        # Fallback: BeautifulSoup
         seen = set()
         urls = []
         for a in soup.find_all("a", href=re.compile(r"/inmueble/\d+")):
@@ -250,7 +309,7 @@ class IdealistaScraper:
         return prop
 
     # ------------------------------------------------------------------
-    # Extracción de fotos — 3 estrategias con fallback
+    # Extracción de fotos
     # ------------------------------------------------------------------
 
     def _extract_photos(self, soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
@@ -266,10 +325,8 @@ class IdealistaScraper:
     def _photos_from_embedded_json(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
         urls: list[str] = []
         is_plan: list[bool] = []
-
         for script in soup.find_all("script", string=True):
             text = script.string or ""
-
             m = re.search(r'"images"\s*:\s*(\[.*?\])', text, re.DOTALL)
             if m:
                 try:
@@ -286,12 +343,10 @@ class IdealistaScraper:
                         return urls, is_plan
                 except (json.JSONDecodeError, TypeError):
                     pass
-
             m = re.search(r'"photos"\s*:\s*(\[(?:"[^"]+",?\s*)+\])', text)
             if m:
                 try:
-                    photo_list = json.loads(m.group(1))
-                    for img_url in photo_list:
+                    for img_url in json.loads(m.group(1)):
                         if isinstance(img_url, str) and img_url.startswith("http"):
                             urls.append(_normalize_image_url(img_url))
                             is_plan.append(False)
@@ -299,14 +354,12 @@ class IdealistaScraper:
                         return urls, is_plan
                 except (json.JSONDecodeError, TypeError):
                     pass
-
         return [], []
 
     @staticmethod
     def _photos_from_html_gallery(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
         urls: list[str] = []
         is_plan: list[bool] = []
-
         for selector in [
             "picture.gallery-image source",
             "img.gallery-image",
@@ -329,13 +382,11 @@ class IdealistaScraper:
                     is_plan.append("plano" in alt or "floor" in alt)
             if urls:
                 break
-
         for img in soup.select("img[alt*='plano'], img[alt*='Plano'], img.floor-plan"):
             src = _normalize_image_url(img.get("src", ""))
             if src and src not in urls:
                 urls.append(src)
                 is_plan.append(True)
-
         return urls, is_plan
 
     @staticmethod
@@ -400,7 +451,6 @@ class IdealistaScraper:
             if els:
                 items = [el.get_text(strip=True) for el in els]
                 break
-
         for text in items:
             lower = text.lower()
             if not prop.area_m2:
@@ -448,10 +498,6 @@ class IdealistaScraper:
             return "rent"
         return "sale"
 
-
-# ------------------------------------------------------------------
-# Utilidad
-# ------------------------------------------------------------------
 
 def _normalize_image_url(url: str) -> str:
     if not url:
