@@ -3,9 +3,10 @@ requests==2.32.3
 beautifulsoup4==4.12.3
 lxml==5.2.2
 
-# Scraping con navegador real (evita bloqueos 403 de Idealista)
+# Scraping con navegador real
 playwright==1.44.0
 playwright-stealth==1.0.6
+camoufox[geoip]==0.4.11
 
 # Scheduling
 APScheduler==3.10.4
@@ -13,8 +14,8 @@ APScheduler==3.10.4
 # Environment
 python-dotenv==1.0.1
 
-# AI (opcional — para búsqueda inteligente con Claude)
-anthopic==0.40.0
+# AI (opcional)
+anthropic==0.40.0
 
-# Tipado y utilidades
+# Tipado
 typing_extensions==4.12.2
