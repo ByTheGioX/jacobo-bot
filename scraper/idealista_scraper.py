@@ -1,12 +1,14 @@
 """
 Scraper para perfiles de agencias en Idealista.
-Usa Playwright + stealth + comportamiento humano para evitar detección.
 
-Cuando aparece captcha DataDome:
-  - Con --show-browser: pausa y resuelves manualmente, luego ENTER
-  - Sin --show-browser: espera 60s y reintenta
+Estrategia anti-DataDome:
+  1. Sesion persistente (guarda cookies entre ejecuciones en data/browser_session/)
+  2. Warm-up: visita la home y navega un poco antes de ir al perfil
+  3. Delays largos y scroll humano
+  4. Si aparece captcha con --show-browser: pausa para resolverlo manualmente
 
-Para añadir perfiles: edita IDEALISTA_PROFILE_URLS en .env
+IMPORTANTE: Si la IP esta bloqueada, cambia de red (hotspot movil) antes de ejecutar.
+Para anadir perfiles: edita IDEALISTA_PROFILE_URLS en .env
 """
 
 import json
@@ -14,6 +16,7 @@ import re
 import time
 import random
 import logging
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin
@@ -25,20 +28,21 @@ from config.settings import IDEALISTA_PROFILE_URLS
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.idealista.com"
+SESSION_DIR = Path("data/browser_session")
 
 _CAPTCHA_SIGNALS = [
     "desliza hacia la derecha",
     "muchas peticiones",
     "datadome",
-    "recibiendo muchas peticiones",
+    "uso indebido",
+    "acceso se ha bloqueado",
     "asegurar tu acceso",
 ]
 
-# Selectores del botón de aceptar cookies de Idealista
 _COOKIE_SELECTORS = [
     "#didomi-notice-agree-button",
+    "button#aceptar",
     "button[id*='accept']",
-    "button[class*='accept']",
     "button:has-text('Aceptar todo')",
     "button:has-text('Aceptar')",
     "#onetrust-accept-btn-handler",
@@ -74,71 +78,116 @@ class Property:
 
 
 class IdealistaScraper:
-    def __init__(self, delay_range: tuple[float, float] = (8.0, 18.0), headless: bool = True):
+    def __init__(self, delay_range: tuple[float, float] = (8.0, 20.0), headless: bool = True):
         self.delay_range = delay_range
         self.headless = headless
+        self._pw = None
         self._browser = None
+        self._context = None
         self._page = None
         self._cookies_accepted = False
 
-    def _sleep(self):
-        """Pausa aleatoria larga para simular navegación humana."""
-        t = random.uniform(*self.delay_range)
-        logger.debug("Esperando %.1fs...", t)
+    # ------------------------------------------------------------------
+    # Delays y comportamiento humano
+    # ------------------------------------------------------------------
+
+    def _sleep(self, low: float = None, high: float = None):
+        lo = low or self.delay_range[0]
+        hi = high or self.delay_range[1]
+        t = random.uniform(lo, hi)
+        logger.debug("Pausa de %.1fs", t)
         time.sleep(t)
 
     def _human_scroll(self):
-        """Scroll natural por la página."""
         try:
             height = self._page.evaluate("document.body.scrollHeight")
-            steps = random.randint(3, 6)
+            steps = random.randint(4, 8)
             for i in range(steps):
-                y = int((height / steps) * (i + 1) * random.uniform(0.7, 1.0))
-                self._page.evaluate(f"window.scrollTo(0, {y})")
-                time.sleep(random.uniform(0.4, 1.2))
-            # Volver un poco arriba (como haría un humano)
-            self._page.evaluate(f"window.scrollTo(0, {random.randint(100, 400)})")
-            time.sleep(random.uniform(0.3, 0.8))
+                y = int((height / steps) * (i + 1) * random.uniform(0.6, 1.0))
+                self._page.evaluate(f"window.scrollTo({{top: {y}, behavior: 'smooth'}})")
+                time.sleep(random.uniform(0.5, 1.8))
+            # Volver arriba parcialmente
+            self._page.evaluate(f"window.scrollTo({{top: {random.randint(0, 300)}, behavior: 'smooth'}})")
+            time.sleep(random.uniform(0.5, 1.2))
         except Exception:
             pass
 
     def _accept_cookies(self):
-        """Acepta el popup de cookies si aparece."""
         if self._cookies_accepted:
             return
         try:
             for sel in _COOKIE_SELECTORS:
-                btn = self._page.query_selector(sel)
-                if btn and btn.is_visible():
-                    time.sleep(random.uniform(1.0, 2.5))  # Pausa antes de hacer clic
-                    btn.click()
-                    logger.info("Cookies aceptadas automáticamente")
-                    self._cookies_accepted = True
-                    time.sleep(random.uniform(1.5, 3.0))
-                    return
+                try:
+                    btn = self._page.wait_for_selector(sel, timeout=3000)
+                    if btn and btn.is_visible():
+                        time.sleep(random.uniform(1.5, 3.0))
+                        btn.click()
+                        logger.info("Cookies aceptadas")
+                        self._cookies_accepted = True
+                        time.sleep(random.uniform(1.5, 2.5))
+                        return
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Warm-up: navegar la home antes de ir al perfil
+    # ------------------------------------------------------------------
+
+    def _warm_up(self):
+        """
+        Visita la homepage de Idealista y navega brevemente para
+        establecer cookies y parecer un usuario real antes de ir al perfil.
+        """
+        logger.info("Iniciando warm-up en idealista.com...")
+        try:
+            self._page.goto("https://www.idealista.com/", wait_until="networkidle", timeout=45000)
+            time.sleep(random.uniform(3.0, 5.0))
+            self._accept_cookies()
+            self._human_scroll()
+            self._sleep(5.0, 12.0)
+
+            # Visitar una busqueda generica para simular interes real
+            self._page.goto(
+                "https://www.idealista.com/venta-viviendas/malaga-malaga/",
+                wait_until="networkidle",
+                timeout=45000,
+            )
+            time.sleep(random.uniform(3.0, 5.0))
+            self._accept_cookies()
+            self._human_scroll()
+            self._sleep(6.0, 14.0)
+            logger.info("Warm-up completado. Procediendo al scraping.")
         except Exception as e:
-            logger.debug("No se encontró popup de cookies: %s", e)
+            logger.warning("Warm-up fallo (no critico): %s", e)
+
+    # ------------------------------------------------------------------
+    # Browser con sesion persistente
+    # ------------------------------------------------------------------
 
     def _start_browser(self):
         from playwright.sync_api import sync_playwright
         try:
             from playwright_stealth import stealth_sync
-            self._stealth = stealth_sync
+            self._stealth_fn = stealth_sync
         except ImportError:
-            logger.warning("playwright-stealth no instalado. Corre: pip install playwright-stealth")
-            self._stealth = None
+            logger.warning("playwright-stealth no instalado: pip install playwright-stealth")
+            self._stealth_fn = None
+
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(
+
+        # Contexto persistente: guarda cookies/localStorage entre ejecuciones
+        self._context = self._pw.chromium.launch_persistent_context(
+            user_data_dir=str(SESSION_DIR),
             headless=self.headless,
             args=[
                 "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
-                "--disable-infobars",
             ],
-        )
-        context = self._browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -148,50 +197,51 @@ class IdealistaScraper:
             viewport={"width": 1366, "height": 768},
             java_script_enabled=True,
         )
-        context.add_init_script("""
+        self._context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
             Object.defineProperty(navigator, 'languages', { get: () => ['es-ES', 'es'] });
             window.chrome = { runtime: {} };
         """)
-        self._page = context.new_page()
-        if self._stealth:
-            self._stealth(self._page)
+        self._page = self._context.new_page()
+        if self._stealth_fn:
+            self._stealth_fn(self._page)
 
     def _stop_browser(self):
         try:
-            if self._browser:
-                self._browser.close()
+            if self._context:
+                self._context.close()
             if self._pw:
                 self._pw.stop()
         except Exception:
             pass
 
+    # ------------------------------------------------------------------
+    # Captcha handler
+    # ------------------------------------------------------------------
+
     def _handle_captcha(self, url: str):
         if not self.headless:
-            logger.warning("\n" + "="*60)
-            logger.warning("CAPTCHA detectado en: %s", url)
-            logger.warning("Resuelve el captcha en la ventana del navegador")
-            logger.warning("Luego vuelve aquí y pulsa ENTER para continuar...")
-            logger.warning("="*60)
-            input("  >> Pulsa ENTER cuando hayas resuelto el captcha: ")
+            logger.warning("\n" + "=" * 60)
+            logger.warning("CAPTCHA en: %s", url)
+            logger.warning("Resuelve el slider en la ventana del navegador")
+            logger.warning("=" * 60)
+            input("  >> ENTER cuando lo hayas resuelto: ")
             self._page.wait_for_timeout(3000)
         else:
-            logger.warning("Captcha detectado. Esperando 90s antes de reintentar...")
-            logger.warning("Tip: usa --show-browser para resolverlo manualmente")
-            time.sleep(90)
+            logger.warning("Captcha detectado. Esperando 120s... (usa --show-browser para resolverlo)")
+            time.sleep(120)
+
+    # ------------------------------------------------------------------
+    # Carga de pagina
+    # ------------------------------------------------------------------
 
     def _get_html(self, url: str, retries: int = 3) -> Optional[str]:
         for attempt in range(retries):
             try:
                 self._page.goto(url, wait_until="networkidle", timeout=45000)
-                # Pausa inicial para que cargue todo el JS
-                time.sleep(random.uniform(2.5, 4.5))
-
-                # Aceptar cookies si aparece el popup
+                time.sleep(random.uniform(2.5, 5.0))
                 self._accept_cookies()
-
-                # Scroll humano
                 self._human_scroll()
 
                 html = self._page.content()
@@ -199,7 +249,7 @@ class IdealistaScraper:
                 if _is_captcha(html):
                     self._handle_captcha(url)
                     self._page.goto(url, wait_until="networkidle", timeout=45000)
-                    time.sleep(3)
+                    time.sleep(4)
                     self._accept_cookies()
                     html = self._page.content()
 
@@ -207,7 +257,7 @@ class IdealistaScraper:
                     return html
 
                 if attempt < retries - 1:
-                    logger.warning("Página incompleta en %s, reintentando...", url)
+                    logger.warning("Pagina incompleta, reintentando en 15s...")
                     time.sleep(15)
             except Exception as e:
                 logger.error("Error cargando %s (intento %d): %s", url, attempt + 1, e)
@@ -217,69 +267,60 @@ class IdealistaScraper:
 
     def _get_soup(self, url: str) -> Optional[BeautifulSoup]:
         html = self._get_html(url)
-        if html is None:
-            return None
-        return BeautifulSoup(html, "lxml")
+        return BeautifulSoup(html, "lxml") if html else None
 
     # ------------------------------------------------------------------
-    # API pública
+    # API publica
     # ------------------------------------------------------------------
 
     def scrape_profile(self, profile_url: str) -> list[Property]:
         logger.info("Scrapeando perfil: %s", profile_url)
         properties: list[Property] = []
         page = 1
-
         while True:
             url = self._profile_page_url(profile_url, page)
             soup = self._get_soup(url)
             if soup is None:
                 break
-
             item_urls = self._parse_listing_page(soup)
             if not item_urls:
-                logger.info("Sin más propiedades en página %d. Total: %d", page, len(properties))
+                logger.info("Sin mas propiedades en pagina %d. Total: %d", page, len(properties))
                 break
-
             for item_url in item_urls:
                 prop = self._scrape_property(item_url)
                 if prop:
                     properties.append(prop)
                 self._sleep()
-
             if not self._has_next_page(soup):
                 break
-
             page += 1
             self._sleep()
-
         return properties
 
     def scrape_all_profiles(self) -> list[Property]:
         if not IDEALISTA_PROFILE_URLS:
-            logger.warning("IDEALISTA_PROFILE_URLS está vacío en .env")
+            logger.warning("IDEALISTA_PROFILE_URLS vacio en .env")
             return []
-
         self._start_browser()
         try:
+            self._warm_up()
             all_props: list[Property] = []
             for url in IDEALISTA_PROFILE_URLS:
                 logger.info("--- Perfil: %s ---", url)
                 all_props.extend(self.scrape_profile(url))
+                self._sleep(15.0, 30.0)  # Pausa larga entre perfiles
             return all_props
         finally:
             self._stop_browser()
 
     # ------------------------------------------------------------------
-    # Paginación
+    # Paginacion
     # ------------------------------------------------------------------
 
     @staticmethod
     def _profile_page_url(profile_url: str, page: int) -> str:
         url = profile_url.rstrip("/")
-        if page == 1:
-            return url
-        return f"{url}/pagina-{page}.htm"
+        return url if page == 1 else f"{url}/pagina-{page}.htm"
 
     @staticmethod
     def _has_next_page(soup: BeautifulSoup) -> bool:
@@ -288,31 +329,23 @@ class IdealistaScraper:
         return bool(soup.select_one("a.icon-arrow-right-after"))
 
     # ------------------------------------------------------------------
-    # Página de listado → URLs de propiedades
+    # Extraccion de URLs de propiedades
     # ------------------------------------------------------------------
 
     def _parse_listing_page(self, soup: BeautifulSoup) -> list[str]:
         try:
             hrefs: list[str] = self._page.evaluate("""
-                () => {
-                    const links = Array.from(document.querySelectorAll('a[href]'));
-                    return links
-                        .map(a => a.href)
-                        .filter(h => h.includes('/inmueble/'));
-                }
+                () => Array.from(document.querySelectorAll('a[href]'))
+                    .map(a => a.href)
+                    .filter(h => h.includes('/inmueble/'))
             """)
             seen: set[str] = set()
-            urls: list[str] = []
-            for href in hrefs:
-                if href not in seen:
-                    seen.add(href)
-                    urls.append(href)
+            urls = [h for h in hrefs if not (h in seen or seen.add(h))]
             if urls:
-                logger.info("Encontradas %d propiedades en esta página", len(urls))
+                logger.info("Encontradas %d propiedades", len(urls))
                 return urls
         except Exception as e:
-            logger.warning("JS eval falló, usando BeautifulSoup: %s", e)
-
+            logger.warning("JS eval fallo: %s", e)
         seen = set()
         urls = []
         for a in soup.find_all("a", href=re.compile(r"/inmueble/\d+")):
@@ -325,19 +358,17 @@ class IdealistaScraper:
         return urls
 
     # ------------------------------------------------------------------
-    # Página de propiedad individual
+    # Scraping de propiedad individual
     # ------------------------------------------------------------------
 
     def _scrape_property(self, url: str) -> Optional[Property]:
-        logger.info("  → Propiedad: %s", url)
+        logger.info("  -> Propiedad: %s", url)
         soup = self._get_soup(url)
         if soup is None:
             return None
-
         prop_id = self._extract_id(url)
         if not prop_id:
             return None
-
         prop = Property(
             idealista_id=prop_id,
             url=url,
@@ -352,15 +383,13 @@ class IdealistaScraper:
             property_type=self._detect_property_type(soup),
             operation_type=self._detect_operation_type(url),
         )
-
         prop.price = self._parse_price(prop.price_text)
         self._parse_features(soup, prop)
         prop.photo_urls, prop.is_floor_plan = self._extract_photos(soup)
-
         return prop
 
     # ------------------------------------------------------------------
-    # Extracción de fotos
+    # Extraccion de fotos
     # ------------------------------------------------------------------
 
     def _extract_photos(self, soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
@@ -381,26 +410,14 @@ class IdealistaScraper:
             m = re.search(r'"images"\s*:\s*(\[.*?\])', text, re.DOTALL)
             if m:
                 try:
-                    images = json.loads(m.group(1))
-                    for img in images:
+                    for img in json.loads(m.group(1)):
                         if not isinstance(img, dict):
                             continue
                         img_url = _normalize_image_url(img.get("url", ""))
-                        tag = (img.get("tag") or img.get("type") or "").lower()
+                        tag = (img.get("tag") or "").lower()
                         if img_url:
                             urls.append(img_url)
                             is_plan.append("plano" in tag or "floor" in tag)
-                    if urls:
-                        return urls, is_plan
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            m = re.search(r'"photos"\s*:\s*(\[(?:"[^"]+",?\s*)+\])', text)
-            if m:
-                try:
-                    for img_url in json.loads(m.group(1)):
-                        if isinstance(img_url, str) and img_url.startswith("http"):
-                            urls.append(_normalize_image_url(img_url))
-                            is_plan.append(False)
                     if urls:
                         return urls, is_plan
                 except (json.JSONDecodeError, TypeError):
@@ -411,15 +428,8 @@ class IdealistaScraper:
     def _photos_from_html_gallery(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
         urls: list[str] = []
         is_plan: list[bool] = []
-        for selector in [
-            "picture.gallery-image source",
-            "img.gallery-image",
-            "div.gallery img",
-            "div[class*='gallery'] img",
-            "li.step img",
-        ]:
+        for selector in ["picture.gallery-image source", "img.gallery-image", "div.gallery img"]:
             for el in soup.select(selector):
-                src = ""
                 if el.name == "source":
                     srcset = el.get("srcset", "")
                     parts = [p.strip() for p in srcset.split(",") if p.strip()]
@@ -427,38 +437,27 @@ class IdealistaScraper:
                 else:
                     src = el.get("src") or el.get("data-src") or ""
                 src = _normalize_image_url(src)
-                alt = (el.get("alt") or "").lower()
                 if src and src.startswith("http"):
                     urls.append(src)
-                    is_plan.append("plano" in alt or "floor" in alt)
+                    is_plan.append("plano" in (el.get("alt") or "").lower())
             if urls:
                 break
-        for img in soup.select("img[alt*='plano'], img[alt*='Plano'], img.floor-plan"):
-            src = _normalize_image_url(img.get("src", ""))
-            if src and src not in urls:
-                urls.append(src)
-                is_plan.append(True)
         return urls, is_plan
 
     @staticmethod
     def _photos_from_jsonld(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
         urls: list[str] = []
-        is_plan: list[bool] = []
         for script in soup.select("script[type='application/ld+json']"):
             try:
                 data = json.loads(script.string or "")
-                images = data.get("image", [])
-                if isinstance(images, str):
-                    images = [images]
-                for img in images:
+                for img in ([data.get("image")] if isinstance(data.get("image"), str) else data.get("image", [])):
                     if isinstance(img, dict):
                         img = img.get("url", "")
                     if isinstance(img, str) and img:
                         urls.append(_normalize_image_url(img))
-                        is_plan.append(False)
-            except (json.JSONDecodeError, AttributeError):
+            except Exception:
                 continue
-        return urls, is_plan
+        return urls, [False] * len(urls)
 
     # ------------------------------------------------------------------
     # Parsers auxiliares
@@ -494,7 +493,6 @@ class IdealistaScraper:
         items: list[str] = []
         for sel in [
             "div.details-property_features ul li",
-            "div.details-property-feature-one ul li",
             "ul.details-property_features li",
             "div[class*='feature'] li",
         ]:
@@ -509,18 +507,18 @@ class IdealistaScraper:
                 if m:
                     prop.area_m2 = float(m.group(1).replace(",", "."))
             if not prop.rooms:
-                m = re.search(r"(\d+)\s*(?:dormitorio|habitaci[oó]n|cuarto)", lower)
+                m = re.search(r"(\d+)\s*(?:dormitorio|habitaci[oó]n)", lower)
                 if m:
                     prop.rooms = int(m.group(1))
             if not prop.bathrooms:
                 m = re.search(r"(\d+)\s*ba[ñn]o", lower)
                 if m:
                     prop.bathrooms = int(m.group(1))
-            if "parking" in lower or "garaje" in lower or "plaza de" in lower:
+            if any(w in lower for w in ("parking", "garaje", "plaza de")):
                 prop.has_parking = True
             if "piscina" in lower:
                 prop.has_pool = True
-            if "terraza" in lower or "balc" in lower:
+            if any(w in lower for w in ("terraza", "balc")):
                 prop.has_terrace = True
             if not prop.floor:
                 m = re.search(r"planta\s+(\w+)", lower)
@@ -529,31 +527,24 @@ class IdealistaScraper:
 
     @staticmethod
     def _detect_property_type(soup: BeautifulSoup) -> str:
-        breadcrumb = soup.select("ol.breadcrumb li, nav[aria-label*='breadcrumb'] li")
-        texts = [li.get_text(strip=True).lower() for li in breadcrumb]
-        types = ("piso", "casa", "chalet", "apartamento", "estudio", "ático",
-                 "attico", "local", "oficina", "garaje", "terreno", "villa")
+        texts = [li.get_text(strip=True).lower()
+                 for li in soup.select("ol.breadcrumb li, nav[aria-label*='breadcrumb'] li")]
+        types = ("piso", "casa", "chalet", "apartamento", "estudio",
+                 "ático", "local", "oficina", "garaje", "terreno", "villa")
         for t in texts:
             for pt in types:
                 if pt in t:
                     return pt
         title = (soup.select_one("h1") or BeautifulSoup("", "lxml")).get_text().lower()
-        for pt in types:
-            if pt in title:
-                return pt
-        return "propiedad"
+        return next((pt for pt in types if pt in title), "propiedad")
 
     @staticmethod
     def _detect_operation_type(url: str) -> str:
-        if "/alquiler/" in url:
-            return "rent"
-        return "sale"
+        return "rent" if "/alquiler/" in url else "sale"
 
 
 def _normalize_image_url(url: str) -> str:
     if not url:
         return ""
-    url = url.strip()
-    url = re.sub(r"/(?:WEB_DETAIL|WEB_LISTING|DETAIL|LISTING)-[A-Z0-9\-]+/", "/", url)
-    url = url.split("?")[0]
-    return url
+    url = re.sub(r"/(?:WEB_DETAIL|WEB_LISTING|DETAIL|LISTING)-[A-Z0-9\-]+/", "/", url.strip())
+    return url.split("?")[0]
