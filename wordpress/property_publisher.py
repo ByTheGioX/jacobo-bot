@@ -1,5 +1,6 @@
 """
-Publica propiedades en WordPress y limpia menciones a inmobiliarias competidoras.
+Publica propiedades en WordPress con el tema Houzez.
+Limpia menciones a inmobiliarias competidoras del título y descripción.
 """
 
 import logging
@@ -8,81 +9,31 @@ from typing import Optional
 
 from scraper.idealista_scraper import Property
 from wordpress.wp_client import WPClient
-from config.settings import WP_PROPERTY_POST_TYPE, COMPETITOR_BRANDS
+from config.settings import WP_PROPERTY_REST_BASE, COMPETITOR_BRANDS
 
 logger = logging.getLogger(__name__)
 
+# Mapeo tipo de propiedad (Idealista) → etiqueta en Houzez
+_TYPE_MAP = {
+    "piso": "Piso",
+    "apartamento": "Apartamento",
+    "casa": "Casa",
+    "chalet": "Chalet",
+    "estudio": "Estudio",
+    "ático": "Ático",
+    "attico": "Ático",
+    "local": "Local comercial",
+    "oficina": "Oficina",
+    "garaje": "Garaje",
+    "terreno": "Terreno",
+    "villa": "Villa",
+}
 
-def _clean_competitor_text(text: str) -> str:
-    """Elimina menciones a marcas competidoras (case-insensitive)."""
+
+def _clean_text(text: str) -> str:
     for brand in COMPETITOR_BRANDS:
-        # Eliminar la marca sola o con contexto inmediato
-        text = re.sub(
-            rf"\b{re.escape(brand)}\b[\.\,\s]*",
-            "",
-            text,
-            flags=re.IGNORECASE,
-        )
-    # Limpiar espacios dobles resultantes
-    text = re.sub(r"  +", " ", text).strip()
-    return text
-
-
-def _build_post_content(prop: Property) -> str:
-    """Genera el HTML del post de WordPress para una propiedad."""
-    features = []
-    if prop.area_m2:
-        features.append(f"<li>📐 <strong>Superficie:</strong> {prop.area_m2} m²</li>")
-    if prop.rooms:
-        features.append(f"<li>🛏 <strong>Habitaciones:</strong> {prop.rooms}</li>")
-    if prop.bathrooms:
-        features.append(f"<li>🚿 <strong>Baños:</strong> {prop.bathrooms}</li>")
-    if prop.floor:
-        features.append(f"<li>🏢 <strong>Planta:</strong> {prop.floor}</li>")
-    if prop.has_parking:
-        features.append("<li>🚗 Plaza de parking incluida</li>")
-    if prop.has_pool:
-        features.append("<li>🏊 Piscina</li>")
-    if prop.has_terrace:
-        features.append("<li>🌿 Terraza/Balcón</li>")
-
-    description = _clean_competitor_text(prop.description)
-
-    html = f"""
-<div class="property-details">
-    <div class="property-price">
-        <span class="price">{prop.price_text}</span>
-    </div>
-    <div class="property-location">
-        <p>📍 {prop.location}</p>
-    </div>
-    <ul class="property-features">
-        {''.join(features)}
-    </ul>
-    <div class="property-description">
-        <h3>Descripción</h3>
-        <p>{description}</p>
-    </div>
-</div>
-"""
-    return html.strip()
-
-
-def _build_post_meta(prop: Property) -> dict:
-    return {
-        "idealista_id": prop.idealista_id,
-        "idealista_url": prop.url,
-        "property_price": prop.price or 0,
-        "property_type": prop.property_type,
-        "operation_type": prop.operation_type,
-        "area_m2": prop.area_m2 or 0,
-        "rooms": prop.rooms or 0,
-        "bathrooms": prop.bathrooms or 0,
-        "has_parking": prop.has_parking,
-        "has_pool": prop.has_pool,
-        "has_terrace": prop.has_terrace,
-        "location": prop.location,
-    }
+        text = re.sub(rf"\b{re.escape(brand)}\b[\.\,\s]*", "", text, flags=re.IGNORECASE)
+    return re.sub(r"  +", " ", text).strip()
 
 
 class PropertyPublisher:
@@ -95,66 +46,77 @@ class PropertyPublisher:
         processed_photos: list[dict],
         existing_wp_id: Optional[int] = None,
     ) -> Optional[int]:
-        """
-        Crea o actualiza un post de propiedad en WordPress.
-        Devuelve el ID del post de WordPress.
-        """
-        # Subir fotos y recoger IDs de media
+        """Crea o actualiza un post de propiedad en WordPress/Houzez."""
         media_ids = self._upload_photos(prop.idealista_id, processed_photos)
         featured_id = media_ids[0] if media_ids else None
 
-        title = _clean_competitor_text(prop.title)
-        content = _build_post_content(prop)
-        meta = _build_post_meta(prop)
+        # Taxonomías Houzez
+        status_label = "For Rent" if prop.operation_type == "rent" else "For Sale"
+        status_id = self.wp.get_or_create_term("property-status", status_label)
 
-        post_data = {
+        type_label = _TYPE_MAP.get(prop.property_type.lower(), prop.property_type.capitalize() or "Propiedad")
+        type_id = self.wp.get_or_create_term("property-type", type_label)
+
+        city = (prop.location.split(",")[0].strip() if prop.location else "") or "Málaga"
+        city_id = self.wp.get_or_create_term("property-city", city)
+
+        feature_ids = self._get_feature_ids(prop)
+
+        # Meta campos Houzez
+        meta: dict = {
+            "FAVE_PROPERTY_PRICE": str(prop.price or 0),
+            "FAVE_PROPERTY_ID": f"idealista-{prop.idealista_id}",
+            "FAVE_PROPERTY_MAP_ADDRESS": prop.location or "",
+        }
+        if prop.area_m2:
+            meta["FAVE_PROPERTY_SIZE"] = str(prop.area_m2)
+        if prop.rooms:
+            meta["FAVE_PROPERTY_BEDROOMS"] = str(prop.rooms)
+        if prop.bathrooms:
+            meta["FAVE_PROPERTY_BATHROOMS"] = str(prop.bathrooms)
+        if prop.has_parking:
+            meta["FAVE_PROPERTY_GARAGE"] = "1"
+        if len(media_ids) > 1:
+            meta["fave_property_images"] = ",".join(str(i) for i in media_ids[1:])
+
+        title = _clean_text(prop.title)
+        content = _clean_text(prop.description)
+
+        post_data: dict = {
             "title": title,
             "content": content,
             "status": "publish",
             "meta": meta,
         }
-
         if featured_id:
             post_data["featured_media"] = featured_id
-
-        # Añadir categoría según tipo de operación
-        cat_name = "Venta" if prop.operation_type == "sale" else "Alquiler"
-        cat_id = self.wp.get_or_create_term("categories", cat_name)
-        if cat_id:
-            post_data["categories"] = [cat_id]
-
-        # Añadir tag de tipo de propiedad
-        tag_id = self.wp.get_or_create_term("tags", prop.property_type.capitalize())
-        if tag_id:
-            post_data["tags"] = [tag_id]
+        if status_id:
+            post_data["property-status"] = [status_id]
+        if type_id:
+            post_data["property-type"] = [type_id]
+        if city_id:
+            post_data["property-city"] = [city_id]
+        if feature_ids:
+            post_data["property-feature"] = feature_ids
 
         try:
             if existing_wp_id:
-                result = self.wp.update_post(WP_PROPERTY_POST_TYPE, existing_wp_id, post_data)
-                logger.info(f"Propiedad {prop.idealista_id} actualizada en WP (ID {existing_wp_id})")
+                result = self.wp.update_post(WP_PROPERTY_REST_BASE, existing_wp_id, post_data)
+                logger.info("Propiedad %s actualizada en WP (ID %s)", prop.idealista_id, existing_wp_id)
             else:
-                result = self.wp.create_post(WP_PROPERTY_POST_TYPE, post_data)
-                logger.info(f"Propiedad {prop.idealista_id} creada en WP (ID {result['id']})")
-
-            # Adjuntar imágenes adicionales como galería (meta campo)
-            if len(media_ids) > 1:
-                self.wp.update_post(WP_PROPERTY_POST_TYPE, result["id"], {
-                    "meta": {"gallery_ids": ",".join(str(i) for i in media_ids[1:])}
-                })
-
+                result = self.wp.create_post(WP_PROPERTY_REST_BASE, post_data)
+                logger.info("Propiedad %s creada en WP (ID %s)", prop.idealista_id, result["id"])
             return result["id"]
-
         except Exception as e:
-            logger.error(f"Error publicando propiedad {prop.idealista_id} en WP: {e}")
+            logger.error("Error publicando propiedad %s en WP: %s", prop.idealista_id, e)
             return None
 
     def unpublish(self, wp_post_id: int):
-        """Borra o despublica una propiedad que ya no existe en Idealista."""
         try:
-            self.wp.delete_post(WP_PROPERTY_POST_TYPE, wp_post_id)
-            logger.info(f"Propiedad WP ID {wp_post_id} eliminada.")
+            self.wp.delete_post(WP_PROPERTY_REST_BASE, wp_post_id)
+            logger.info("Propiedad WP ID %s eliminada.", wp_post_id)
         except Exception as e:
-            logger.error(f"Error eliminando post WP {wp_post_id}: {e}")
+            logger.error("Error eliminando post WP %s: %s", wp_post_id, e)
 
     def _upload_photos(self, idealista_id: str, processed_photos: list[dict]) -> list[int]:
         media_ids = []
@@ -162,8 +124,23 @@ class PropertyPublisher:
             local_path = photo.get("local_path")
             if not local_path:
                 continue
-            title = f"Propiedad {idealista_id} - Foto {idx + 1}"
+            title = f"Propiedad {idealista_id} foto {idx + 1}"
             media = self.wp.upload_media(local_path, title)
             if media:
                 media_ids.append(media["id"])
         return media_ids
+
+    def _get_feature_ids(self, prop: Property) -> list[int]:
+        features = []
+        if prop.has_parking:
+            features.append("Garaje / Parking")
+        if prop.has_pool:
+            features.append("Piscina")
+        if prop.has_terrace:
+            features.append("Terraza")
+        ids = []
+        for name in features:
+            fid = self.wp.get_or_create_term("property-feature", name)
+            if fid:
+                ids.append(fid)
+        return ids

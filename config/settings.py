@@ -31,6 +31,7 @@ WP_URL: str = os.getenv("WP_URL", "").rstrip("/")
 WP_USER: str = os.getenv("WP_USER", "")
 WP_APP_PASSWORD: str = os.getenv("WP_APP_PASSWORD", "")
 WP_PROPERTY_POST_TYPE: str = os.getenv("WP_PROPERTY_POST_TYPE", "property")
+WP_PROPERTY_REST_BASE: str = os.getenv("WP_PROPERTY_REST_BASE", "properties")
 
 # Database
 DB_PATH: str = os.getenv("DB_PATH", "data/jacobo_bot.db")

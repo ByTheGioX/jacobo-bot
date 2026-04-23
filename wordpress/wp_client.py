@@ -66,28 +66,24 @@ class WPClient:
     # Posts
     # ------------------------------------------------------------------
 
-    def create_post(self, post_type: str, data: dict) -> dict:
-        return self._post(f"{post_type}s", data)
+    def create_post(self, rest_base: str, data: dict) -> dict:
+        return self._post(rest_base, data)
 
-    def update_post(self, post_type: str, post_id: int, data: dict) -> dict:
-        return self._put(f"{post_type}s/{post_id}", data)
+    def update_post(self, rest_base: str, post_id: int, data: dict) -> dict:
+        return self._put(f"{rest_base}/{post_id}", data)
 
-    def delete_post(self, post_type: str, post_id: int):
-        return self._delete(f"{post_type}s/{post_id}")
+    def delete_post(self, rest_base: str, post_id: int):
+        return self._delete(f"{rest_base}/{post_id}")
 
-    def get_posts_by_meta(self, post_type: str, meta_key: str, meta_value: str) -> list[dict]:
-        """
-        Busca posts por metadato. Requiere que el campo meta sea público
-        o que el usuario tenga permisos de editor.
-        """
+    def get_posts_by_meta(self, rest_base: str, meta_key: str, meta_value: str) -> list[dict]:
         try:
-            return self._get(f"{post_type}s", {
+            return self._get(rest_base, {
                 "meta_key": meta_key,
                 "meta_value": meta_value,
                 "per_page": 1,
             })
         except Exception as e:
-            logger.warning(f"No se pudo buscar por meta ({meta_key}={meta_value}): {e}")
+            logger.warning("No se pudo buscar por meta (%s=%s): %s", meta_key, meta_value, e)
             return []
 
     # ------------------------------------------------------------------
