@@ -20,7 +20,7 @@ from config.settings import MAX_PHOTOS_PER_PROPERTY, ENABLE_HOME_STAGING
 logger = logging.getLogger(__name__)
 
 PROCESSED_DIR = Path("data/photos")
-_MAX_WORKERS = 3
+_MAX_WORKERS = 5
 
 _FLOOR_PLAN_PATTERNS = [
     r"plano",
