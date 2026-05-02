@@ -4,20 +4,23 @@ Orquestador de procesamiento de fotos.
 - Descarga fotos de Idealista
 - Salta planos y vídeos (los descarga sin modificar)
 - Llama a Kie.ai para quitar marca de agua y mejorar cada foto
-- Devuelve lista de dicts con rutas locales y URLs procesadas
+- Procesa todas las fotos en paralelo (hasta 3 simultáneas)
 """
 
+import hashlib
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
 from photo_processor.kie_ai_client import KieAiClient
-from config.settings import MAX_PHOTOS_PER_PROPERTY
+from config.settings import MAX_PHOTOS_PER_PROPERTY, ENABLE_HOME_STAGING
 
 logger = logging.getLogger(__name__)
 
 PROCESSED_DIR = Path("data/photos")
+_MAX_WORKERS = 3
 
 _FLOOR_PLAN_PATTERNS = [
     r"plano",
@@ -27,6 +30,36 @@ _FLOOR_PLAN_PATTERNS = [
 ]
 
 _VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".webm")
+
+_LABEL_TO_ROOM_TYPE = {
+    "salon": "salon", "salón": "salon", "living": "salon", "comedor": "salon",
+    "cocina": "cocina", "kitchen": "cocina",
+    "dormitorio": "dormitorio", "habitacion": "dormitorio", "habitación": "dormitorio",
+    "dormitorio principal": "dormitorio_principal", "suite": "dormitorio_principal",
+    "baño": "bano", "bano": "bano", "aseo": "bano",
+    "terraza": "terraza", "balcón": "terraza", "balcon": "terraza", "patio": "terraza",
+    "jardín": "jardin", "jardin": "jardin", "garden": "jardin",
+    "garaje": "garaje", "parking": "garaje",
+}
+
+
+def _label_to_room_type(label: str) -> Optional[str]:
+    low = label.lower()
+    for key, room_type in sorted(_LABEL_TO_ROOM_TYPE.items(), key=lambda x: len(x[0]), reverse=True):
+        if key in low:
+            return room_type
+    return None
+
+
+def _sanitize_folder(name: str) -> str:
+    name = re.sub(r'[<>:"/\\|?*]', '', name)
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name[:80]
+
+
+def _url_hash(url: str) -> str:
+    """10-char MD5 of the URL — used as a stable cache key in filenames."""
+    return hashlib.md5(url.encode()).hexdigest()[:10]
 
 
 def _is_floor_plan_url(url: str) -> bool:
@@ -50,11 +83,6 @@ def _select_photos(
     is_floor_plan_flags: list[bool],
     max_regular: int,
 ) -> list[tuple[str, bool]]:
-    """
-    Separa fotos normales de planos/vídeos.
-    Limita las fotos normales a max_regular (Idealista las ordena por calidad).
-    Devuelve lista de (url, is_plan_or_video).
-    """
     regular: list[tuple[str, bool]] = []
     plans: list[tuple[str, bool]] = []
 
@@ -67,76 +95,110 @@ def _select_photos(
     selected_regular = regular[:max_regular]
     skipped = len(regular) - len(selected_regular)
     if skipped > 0:
-        logger.info("Limitando a %d fotos (%d descartadas). Planos/vídeos: %d",
+        logger.info("Limitando a %d fotos regulares (%d descartadas, %d planos/videos ignorados)",
                     max_regular, skipped, len(plans))
-    return selected_regular + plans
+    elif plans:
+        logger.debug("Ignorando %d planos/videos", len(plans))
+    return selected_regular
 
 
 class PhotoEnhancer:
     def __init__(self):
-        self.client = KieAiClient()
+        try:
+            self.client = KieAiClient()
+        except Exception:
+            self.client = None
+            logger.info("KIE_AI_API_KEY no configurada — fotos se guardan sin procesar.")
 
     def process_property_photos(
         self,
         idealista_id: str,
         photo_urls: list[str],
         is_floor_plan_flags: list[bool],
+        photo_labels: list[str] = None,
+        folder_name: str = None,
     ) -> list[dict]:
-        """
-        Procesa todas las fotos de una propiedad.
+        folder = _sanitize_folder(folder_name) if folder_name else idealista_id
+        raw_dir = PROCESSED_DIR / folder / "raw"
+        processed_dir = PROCESSED_DIR / folder / "processed"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        processed_dir.mkdir(parents=True, exist_ok=True)
 
-        Retorna lista de dicts:
-          {
-            "original_url": str,
-            "processed_url": str | None,
-            "local_path": str | None,
-            "is_floor_plan": bool,
-            "skipped": bool,        # True = plano/vídeo, no se mejoró
-          }
-        """
-        prop_dir = PROCESSED_DIR / idealista_id
-        prop_dir.mkdir(parents=True, exist_ok=True)
-
-        # Selección: máx. MAX_PHOTOS fotos normales + todos los planos
         selected = _select_photos(photo_urls, is_floor_plan_flags, MAX_PHOTOS_PER_PROPERTY)
+        url_to_label = dict(zip(photo_urls, photo_labels)) if photo_labels else {}
+        if not selected:
+            return []
 
+        # Paso 1: descargar originales — salta si ya existe el archivo cacheado por URL
+        raw_paths: dict[int, Optional[str]] = {}
+        for idx, (url, is_plan) in enumerate(selected):
+            ext = _file_ext(url)
+            prefix = f"plano_{idx + 1}" if is_plan else f"img_{idx + 1}"
+            dest = raw_dir / f"{prefix}_{_url_hash(url)}{ext}"
+            if dest.exists():
+                logger.debug("  [CACHE RAW] foto %d ya descargada", idx)
+                raw_paths[idx] = str(dest)
+            else:
+                ok = KieAiClient.download_image(url, dest)
+                raw_paths[idx] = str(dest) if ok else None
+
+        # Paso 2: enviar a KIE.AI solo las fotos cuyo procesado no está cacheado
+        regular_items = [
+            (idx, url) for idx, (url, is_plan) in enumerate(selected)
+            if not is_plan
+            and not (processed_dir / f"img_{idx + 1}_{_url_hash(url)}_enhanced.jpg").exists()
+        ]
+        enhanced_urls: dict[int, Optional[str]] = {}
+
+        if self.client and regular_items:
+            logger.info("Enviando %d fotos a KIE.AI en paralelo...", len(regular_items))
+            with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(regular_items))) as executor:
+                futures = {
+                    executor.submit(
+                        self.client.enhance_photo,
+                        url,
+                        home_staging=ENABLE_HOME_STAGING,
+                        room_type=_label_to_room_type(url_to_label.get(url, "")),
+                    ): idx
+                    for idx, url in regular_items
+                }
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        enhanced_urls[idx] = future.result()
+                    except Exception as e:
+                        logger.error("Error KIE.AI foto %d: %s", idx, e)
+                        enhanced_urls[idx] = None
+
+        # Paso 3: descargar mejoradas y armar resultados
         results: list[dict] = []
-        regular_count = 0
-
         for idx, (url, is_plan) in enumerate(selected):
             result: dict = {
                 "original_url": url,
                 "processed_url": None,
-                "local_path": None,
+                "raw_path": raw_paths.get(idx),
+                "local_path": raw_paths.get(idx),
                 "is_floor_plan": is_plan,
-                "skipped": False,
+                "skipped": is_plan,
             }
 
             if is_plan:
-                # Plano/vídeo: descargar sin modificar
-                logger.info("  [PLAN] %s", url)
-                result["skipped"] = True
-                dest = prop_dir / f"plan_{idx:02d}{_file_ext(url)}"
-                self.client.download_image(url, dest)
-                result["local_path"] = str(dest)
-                results.append(result)
-                continue
-
-            regular_count += 1
-            logger.info("  [ENHANCE %d/%d] %s", regular_count, len(selected) - len([x for x in selected if x[1]]), url)
-            processed_url = self.client.enhance_photo(url)
-
-            if processed_url:
-                dest = prop_dir / f"photo_{idx:02d}_enhanced{_file_ext(processed_url)}"
-                ok = self.client.download_image(processed_url, dest)
-                result["processed_url"] = processed_url
-                result["local_path"] = str(dest) if ok else None
+                logger.debug("  [PLAN] %s", raw_paths.get(idx))
             else:
-                # Fallback: guardar original sin procesar
-                logger.warning("  [FALLBACK] Kie.ai falló en foto %d. Guardando original.", idx)
-                dest = prop_dir / f"photo_{idx:02d}_original{_file_ext(url)}"
-                ok = self.client.download_image(url, dest)
-                result["local_path"] = str(dest) if ok else None
+                url_key = _url_hash(url)
+                proc_dest = processed_dir / f"img_{idx + 1}_{url_key}_enhanced.jpg"
+                if proc_dest.exists():
+                    result["processed_url"] = url
+                    result["local_path"] = str(proc_dest)
+                    logger.debug("  [CACHE PROC] foto %d ya mejorada", idx)
+                elif idx in enhanced_urls and enhanced_urls[idx]:
+                    proc_url = enhanced_urls[idx]
+                    ok = KieAiClient.download_image(proc_url, proc_dest)
+                    result["processed_url"] = proc_url
+                    result["local_path"] = str(proc_dest) if ok else raw_paths.get(idx)
+                    logger.info("  [OK] foto %d mejorada", idx)
+                else:
+                    logger.warning("  [FALLBACK] foto %d — usando original", idx)
 
             results.append(result)
 
@@ -144,7 +206,7 @@ class PhotoEnhancer:
         fallbacks = sum(1 for r in results if not r["skipped"] and not r["processed_url"])
         plans = sum(1 for r in results if r["skipped"])
         logger.info(
-            "Propiedad %s: %d mejoradas | %d fallback | %d planos/vídeos",
+            "Propiedad %s: %d mejoradas | %d fallback | %d planos",
             idealista_id, enhanced, fallbacks, plans,
         )
         return results

@@ -12,6 +12,9 @@ env/
 # Variables de entorno (nunca subir al repo)
 .env
 
+# Configuración con API keys (nunca al repo)
+configuracion/
+
 # Datos generados por el bot
 data/
 

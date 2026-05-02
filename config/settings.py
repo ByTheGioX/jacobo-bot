@@ -1,68 +1,144 @@
-import os
 import json
+import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# ──────────────────────────────────────────────────────────────
+# Leer archivos TXT de la carpeta configuracion/
+# ──────────────────────────────────────────────────────────────
+
+def _load_txt_config() -> dict:
+    config_dir = Path(__file__).parent.parent / "configuracion"
+    result: dict = {}
+    if not config_dir.exists():
+        return result
+    for txt_file in sorted(config_dir.glob("*.txt")):
+        for line in txt_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                k, v = k.strip(), v.strip()
+                if k:
+                    result[k] = v
+    return result
+
+
+def _build_agencies(cfg: dict) -> list[dict]:
+    """Convierte AGENCIA_N_* del TXT en la lista de agencias."""
+    agencies = []
+    for i in range(1, 11):
+        nombre = cfg.get(f"AGENCIA_{i}_NOMBRE", "").strip()
+        if not nombre:
+            continue
+        email = cfg.get(f"AGENCIA_{i}_EMAIL", "").strip()
+        zonas_raw = cfg.get(f"AGENCIA_{i}_ZONAS", "")
+        zonas = [z.strip() for z in zonas_raw.split(",") if z.strip()]
+        agencies.append({"name": nombre, "email": email, "zones": zonas})
+    return agencies
+
+
+_TXT = _load_txt_config()
+
+
+def _get(key: str, default: str = "") -> str:
+    """TXT files tienen prioridad sobre .env."""
+    val = _TXT.get(key)
+    if val is not None:
+        return val
+    return os.getenv(key, default)
+
 
 def _list(key: str, sep: str = ",") -> list[str]:
-    val = os.getenv(key, "")
+    val = _get(key, "")
     return [v.strip() for v in val.split(sep) if v.strip()]
 
 
-def _json(key: str, default):
-    raw = os.getenv(key, "")
+def _int(key: str, default: int) -> int:
     try:
-        return json.loads(raw) if raw else default
-    except json.JSONDecodeError:
+        return int(_get(key, str(default)))
+    except ValueError:
         return default
 
+
+def _float(key: str, default: float) -> float:
+    try:
+        return float(_get(key, str(default)))
+    except ValueError:
+        return default
+
+
+# ──────────────────────────────────────────────────────────────
+# Variables de configuración
+# ──────────────────────────────────────────────────────────────
 
 # Idealista
 IDEALISTA_PROFILE_URLS: list[str] = _list("IDEALISTA_PROFILE_URLS")
 
 # Kie.ai
-KIE_AI_API_KEY: str = os.getenv("KIE_AI_API_KEY", "")
-# Número máximo de fotos normales a procesar por propiedad (planos siempre se conservan aparte)
-MAX_PHOTOS_PER_PROPERTY: int = int(os.getenv("MAX_PHOTOS_PER_PROPERTY", "15"))
+KIE_AI_API_KEY: str = _get("KIE_AI_API_KEY")
+MAX_PHOTOS_PER_PROPERTY: int = _int("MAX_PHOTOS_PER_PROPERTY", 15)
+ENABLE_HOME_STAGING: bool = _get("ENABLE_HOME_STAGING", "false").lower() == "true"
+SKIP_WORDPRESS: bool = _get("SKIP_WORDPRESS", "false").lower() == "true"
+MAX_PROPERTIES_PER_AGENCY: int = _int("MAX_PROPERTIES_PER_AGENCY", 0)
 
 # WordPress
-WP_URL: str = os.getenv("WP_URL", "").rstrip("/")
-WP_USER: str = os.getenv("WP_USER", "")
-WP_APP_PASSWORD: str = os.getenv("WP_APP_PASSWORD", "")
-WP_PROPERTY_POST_TYPE: str = os.getenv("WP_PROPERTY_POST_TYPE", "property")
-WP_PROPERTY_REST_BASE: str = os.getenv("WP_PROPERTY_REST_BASE", "properties")
+WP_URL: str = _get("WP_URL").rstrip("/")
+WP_USER: str = _get("WP_USER")
+WP_APP_PASSWORD: str = _get("WP_APP_PASSWORD")
+WP_PROPERTY_POST_TYPE: str = _get("WP_PROPERTY_POST_TYPE", "property")
+WP_PROPERTY_REST_BASE: str = _get("WP_PROPERTY_REST_BASE", "properties")
 
 # Database
-DB_PATH: str = os.getenv("DB_PATH", "data/jacobo_bot.db")
+DB_PATH: str = _get("DB_PATH", "data/jacobo_bot.db")
 
 # Email / SMTP
-SMTP_HOST: str = os.getenv("SMTP_HOST", "")
-SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER: str = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
-EMAIL_FROM: str = os.getenv("EMAIL_FROM", "")
-EMAIL_FROM_NAME: str = os.getenv("EMAIL_FROM_NAME", "Inmobiliaria")
+SMTP_HOST: str = _get("SMTP_HOST")
+SMTP_PORT: int = _int("SMTP_PORT", 587)
+SMTP_USER: str = _get("SMTP_USER")
+SMTP_PASSWORD: str = _get("SMTP_PASSWORD")
+EMAIL_FROM: str = _get("EMAIL_FROM")
+EMAIL_FROM_NAME: str = _get("EMAIL_FROM_NAME", "Inmobiliaria")
 
-COLLABORATING_AGENCIES: list[dict] = _json("COLLABORATING_AGENCIES", [])
+# Agencias colaboradoras (desde TXT o .env como fallback)
+_agencies_from_txt = _build_agencies(_TXT)
+if _agencies_from_txt:
+    COLLABORATING_AGENCIES: list[dict] = _agencies_from_txt
+else:
+    try:
+        _raw = os.getenv("COLLABORATING_AGENCIES", "[]")
+        COLLABORATING_AGENCIES = json.loads(_raw) if _raw else []
+    except json.JSONDecodeError:
+        COLLABORATING_AGENCIES = []
 
-# Scheduler
-CHECK_INTERVAL_HOURS: int = int(os.getenv("CHECK_INTERVAL_HOURS", "24"))
-
-# Text cleanup
+# Marcas de competidores
 COMPETITOR_BRANDS: list[str] = _list("COMPETITOR_BRANDS")
 
-# Proxy residencial (opcional pero recomendado para evitar bloqueos de IP)
-# Formato: http://usuario:contraseña@servidor:puerto
-# Compatible con Smartproxy, BrightData, Oxylabs, etc.
-PROXY_SERVER: str = os.getenv("PROXY_SERVER", "")   # ej: http://gate.smartproxy.com:10001
-PROXY_USER: str = os.getenv("PROXY_USER", "")
-PROXY_PASSWORD: str = os.getenv("PROXY_PASSWORD", "")
+# Proxy residencial (opcional)
+PROXY_SERVER: str = _get("PROXY_SERVER", "")
+PROXY_USER: str = _get("PROXY_USER", "")
+PROXY_PASSWORD: str = _get("PROXY_PASSWORD", "")
 
-# Claude AI
-ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+# Scheduler
+SCRAPE_HOUR: int = _int("SCRAPE_HOUR", 3)
+SCRAPE_MINUTE: int = _int("SCRAPE_MINUTE", 0)
 
-# Scraper HTTP headers to mimic a real browser
+# Scraper delays
+SCRAPE_DELAY_MIN: float = _float("SCRAPE_DELAY_MIN", 25.0)
+SCRAPE_DELAY_MAX: float = _float("SCRAPE_DELAY_MAX", 55.0)
+
+# Scrape.do — fallback anti-bloqueo para DataDome
+SCRAPE_DO_TOKEN: str = _get("SCRAPE_DO_TOKEN")
+
+# OpenRouter (reemplaza a Claude AI)
+OPENROUTER_API_KEY: str = _get("OPENROUTER_API_KEY")
+OPENROUTER_MODEL: str = _get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+
+# Anthropic (legacy — ya no se usa)
+ANTHROPIC_API_KEY: str = _get("ANTHROPIC_API_KEY")
+
+# Scraper HTTP headers
 SCRAPER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

@@ -1,7 +1,7 @@
 """
 Búsqueda inteligente de propiedades.
 El comprador escribe en lenguaje natural y el sistema:
-1. Parsea los requisitos con Claude AI
+1. Parsea los requisitos con OpenRouter (GPT-4o Mini)
 2. Busca en la DB de propiedades activas
 3. Si no hay resultados, devuelve trigger para enviar emails a agencias
 """
@@ -9,6 +9,7 @@ El comprador escribe en lenguaje natural y el sistema:
 import json
 import logging
 import re
+import requests
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -53,22 +54,14 @@ class SearchCriteria:
 class SmartSearch:
     """
     Parsea búsquedas en lenguaje natural.
-    Primero intenta con Claude AI; si no hay API key, usa regex.
+    Usa OpenRouter (GPT-4o Mini) si hay API key; si no, usa regex.
     """
 
     def __init__(self):
         self.db = Database()
-        self._claude = None
-        self._init_claude()
-
-    def _init_claude(self):
-        from config.settings import ANTHROPIC_API_KEY
-        if ANTHROPIC_API_KEY:
-            try:
-                import anthropic
-                self._claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            except ImportError:
-                logger.warning("Librería anthropic no instalada. Usando parser regex.")
+        from config.settings import OPENROUTER_API_KEY, OPENROUTER_MODEL
+        self._api_key = OPENROUTER_API_KEY
+        self._model = OPENROUTER_MODEL
 
     # ------------------------------------------------------------------
     # API pública
@@ -115,43 +108,51 @@ class SmartSearch:
     # ------------------------------------------------------------------
 
     def _parse_query(self, query: str) -> SearchCriteria:
-        if self._claude:
-            return self._parse_with_claude(query)
+        if self._api_key:
+            return self._parse_with_openrouter(query)
         return self._parse_with_regex(query)
 
-    def _parse_with_claude(self, query: str) -> SearchCriteria:
-        prompt = f"""Extrae los criterios de búsqueda de esta descripción de propiedad inmobiliaria en España.
-Devuelve SOLO un JSON con estos campos (usa null si no se menciona):
-{{
-  "location": "ciudad o zona",
-  "zones": ["zona1", "zona2"],
-  "property_type": "apartamento|piso|casa|chalet|estudio|local|garaje|terreno",
-  "operation": "sale|rent",
-  "rooms_min": número,
-  "rooms_max": número,
-  "price_max": número en euros,
-  "area_min": número en m2,
-  "has_parking": true|false,
-  "has_pool": true|false,
-  "has_terrace": true|false
-}}
-
-Búsqueda: "{query}"
-"""
+    def _parse_with_openrouter(self, query: str) -> SearchCriteria:
+        prompt = (
+            "Extrae los criterios de búsqueda de esta descripción de propiedad inmobiliaria en España. "
+            "Devuelve SOLO un JSON con estos campos (usa null si no se menciona):\n"
+            "{\n"
+            '  "location": "ciudad o zona",\n'
+            '  "zones": ["zona1", "zona2"],\n'
+            '  "property_type": "apartamento|piso|casa|chalet|estudio|local|garaje|terreno",\n'
+            '  "operation": "sale|rent",\n'
+            '  "rooms_min": número,\n'
+            '  "rooms_max": número,\n'
+            '  "price_max": número en euros,\n'
+            '  "area_min": número en m2,\n'
+            '  "has_parking": true|false,\n'
+            '  "has_pool": true|false,\n'
+            '  "has_terrace": true|false\n'
+            "}\n\n"
+            f'Búsqueda: "{query}"'
+        )
         try:
-            msg = self._claude.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=500,
-                messages=[{"role": "user", "content": prompt}],
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self._model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 500,
+                },
+                timeout=30,
             )
-            raw = msg.content[0].text.strip()
-            # Extraer JSON del texto
+            resp.raise_for_status()
+            raw = resp.json()["choices"][0]["message"]["content"].strip()
             m = re.search(r"\{.*\}", raw, re.DOTALL)
             if m:
                 data = json.loads(m.group())
                 return self._dict_to_criteria(query, data)
         except Exception as e:
-            logger.error(f"Error con Claude AI: {e}")
+            logger.error("Error con OpenRouter: %s", e)
 
         return self._parse_with_regex(query)
 

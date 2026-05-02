@@ -5,11 +5,12 @@ Limpia menciones a inmobiliarias competidoras del título y descripción.
 
 import logging
 import re
+import requests
 from typing import Optional
 
 from scraper.idealista_scraper import Property
 from wordpress.wp_client import WPClient
-from config.settings import WP_PROPERTY_REST_BASE, COMPETITOR_BRANDS
+from config.settings import WP_PROPERTY_REST_BASE, COMPETITOR_BRANDS, OPENROUTER_API_KEY, OPENROUTER_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ class PropertyPublisher:
             meta["fave_property_images"] = ",".join(str(i) for i in media_ids[1:])
 
         title = _clean_text(prop.title)
-        content = _clean_text(prop.description)
+        content = self._rewrite_description(_clean_text(prop.description), prop)
 
         post_data: dict = {
             "title": title,
@@ -110,6 +111,36 @@ class PropertyPublisher:
         except Exception as e:
             logger.error("Error publicando propiedad %s en WP: %s", prop.idealista_id, e)
             return None
+
+    def _rewrite_description(self, raw: str, prop: Property) -> str:
+        """Reescribe la descripción con IA para que sea única. Fallback: texto original."""
+        if not raw or not OPENROUTER_API_KEY:
+            return raw
+        context = f"Tipo: {prop.property_type}, {prop.rooms or '?'} hab., {prop.bathrooms or '?'} baños, {prop.area_m2 or '?'} m², {prop.location}."
+        prompt = (
+            "Eres un copywriter inmobiliario profesional en España. "
+            "Reescribe la siguiente descripción de una propiedad para que sea atractiva, única y no sea una copia literal. "
+            "Conserva TODOS los datos concretos (habitaciones, metros, ubicación, características). "
+            "Escribe en español, tono profesional pero cercano, máximo 200 palabras. "
+            "Devuelve SOLO el texto de la descripción, sin encabezados ni comentarios.\n\n"
+            f"Contexto: {context}\n\n"
+            f"Descripción original:\n{raw[:1500]}"
+        )
+        try:
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+                json={"model": OPENROUTER_MODEL, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            rewritten = resp.json()["choices"][0]["message"]["content"].strip()
+            if rewritten:
+                logger.info("Descripción reescrita con IA (%d → %d chars)", len(raw), len(rewritten))
+                return rewritten
+        except Exception as e:
+            logger.warning("Error reescribiendo descripción con IA: %s — usando original", e)
+        return raw
 
     def unpublish(self, wp_post_id: int):
         try:

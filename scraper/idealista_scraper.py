@@ -14,17 +14,20 @@ Para anadir perfiles: edita IDEALISTA_PROFILE_URLS en .env
 
 import json
 import re
+import shutil
 import time
 import random
 import logging
+from collections import Counter
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
+import requests
 from bs4 import BeautifulSoup
 
-from config.settings import IDEALISTA_PROFILE_URLS, PROXY_SERVER, PROXY_USER, PROXY_PASSWORD
+from config.settings import IDEALISTA_PROFILE_URLS, MAX_PROPERTIES_PER_AGENCY, SCRAPE_DO_TOKEN, PROXY_SERVER, PROXY_USER, PROXY_PASSWORD
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,30 @@ _COOKIE_SELECTORS = [
     "#onetrust-accept-btn-handler",
 ]
 
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.112 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+]
+
+_WARMUP_PAGES = [
+    "https://www.idealista.com/",
+    "https://www.idealista.com/venta-viviendas/malaga-malaga/",
+    "https://www.idealista.com/venta-viviendas/sevilla/",
+    "https://www.idealista.com/alquiler-viviendas/madrid/",
+    "https://www.idealista.com/venta-casas/malaga-malaga/",
+    "https://www.idealista.com/venta-viviendas/marbella-malaga/",
+    "https://www.idealista.com/venta-pisos/barcelona/",
+    "https://www.idealista.com/venta-viviendas/granada/",
+]
+
 
 def _is_captcha(html: str) -> bool:
     low = html.lower()
@@ -69,6 +96,7 @@ class Property:
     description: str = ""
     photo_urls: list[str] = field(default_factory=list)
     is_floor_plan: list[bool] = field(default_factory=list)
+    photo_labels: list[str] = field(default_factory=list)
     has_parking: bool = False
     has_pool: bool = False
     has_terrace: bool = False
@@ -78,7 +106,7 @@ class Property:
 
 
 class IdealistaScraper:
-    def __init__(self, delay_range: tuple[float, float] = (8.0, 20.0), headless: bool = True):
+    def __init__(self, delay_range: tuple[float, float] = (25.0, 55.0), headless: bool = False):
         self.delay_range = delay_range
         self.headless = headless
         self._pw = None
@@ -87,6 +115,9 @@ class IdealistaScraper:
         self._page = None
         self._cookies_accepted = False
         self._use_camoufox = False
+        self._captcha_count = 0
+        self._current_ua = random.choice(_USER_AGENTS)
+        self.seen_ids: set[str] = set()  # todos los IDs vistos en listings (incluye conocidas)
 
     def _sleep(self, lo: float = None, hi: float = None):
         t = random.uniform(lo or self.delay_range[0], hi or self.delay_range[1])
@@ -121,16 +152,12 @@ class IdealistaScraper:
             except Exception:
                 continue
 
-    def _wait_captcha_solved(self, url: str, max_wait: int = 300):
-        """
-        Cuando aparece captcha con navegador visible:
-        muestra mensaje y espera automaticamente hasta que el usuario
-        lo resuelva (detecta cuando desaparece el captcha).
-        """
+    def _wait_captcha_solved(self, max_wait: int = 300):
+        self._captcha_count += 1
         if not self.headless:
             logger.warning("")
             logger.warning("=" * 60)
-            logger.warning("CAPTCHA detectado!")
+            logger.warning("CAPTCHA detectado! (#%d en esta sesion)", self._captcha_count)
             logger.warning("-> Arrastra el slider en la ventana del navegador")
             logger.warning("-> El bot continuara solo cuando lo resuelvas")
             logger.warning("=" * 60)
@@ -140,40 +167,44 @@ class IdealistaScraper:
                 try:
                     html = self._page.content()
                     if not _is_captcha(html):
-                        logger.info("Captcha resuelto! Continuando...")
-                        time.sleep(2)
+                        extra = random.uniform(60, 120)
+                        logger.info("Captcha resuelto! Esperando %.0fs adicionales para normalizar sesion...", extra)
+                        time.sleep(extra)
                         return
                 except Exception:
                     pass
             logger.warning("Timeout esperando captcha (%ds)", max_wait)
         else:
-            logger.warning("Captcha detectado. Esperando 120s... (usa --show-browser para resolverlo tu mismo)")
+            logger.warning(
+                "Captcha detectado (#%d). Esperando 120s... (usa --show-browser para resolverlo manualmente)",
+                self._captcha_count,
+            )
             time.sleep(120)
 
     # ------------------------------------------------------------------
-    # Warm-up humano
+    # Sesion y warm-up
     # ------------------------------------------------------------------
 
-    def _warm_up(self):
-        logger.info("Warm-up: navegando como humano antes de ir al perfil...")
-        try:
-            self._page.goto("https://www.idealista.com/", wait_until="networkidle", timeout=45000)
-            time.sleep(random.uniform(3.0, 5.0))
-            self._accept_cookies()
-            self._human_scroll()
-            self._sleep(6.0, 12.0)
+    def _clear_session(self):
+        if SESSION_DIR.exists():
+            shutil.rmtree(SESSION_DIR)
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        logger.info("Sesion del navegador limpiada (IP/cookies frescas).")
 
-            self._page.goto(
-                "https://www.idealista.com/venta-viviendas/malaga-malaga/",
-                wait_until="networkidle", timeout=45000,
-            )
-            time.sleep(random.uniform(3.0, 6.0))
-            self._accept_cookies()
-            self._human_scroll()
-            self._sleep(8.0, 15.0)
-            logger.info("Warm-up completado.")
-        except Exception as e:
-            logger.warning("Warm-up error (no critico): %s", e)
+    def _warm_up(self):
+        pages = random.sample(_WARMUP_PAGES, k=min(6, len(_WARMUP_PAGES)))
+        logger.info("Warm-up: visitando %d paginas antes de scrapear...", len(pages))
+        for i, url in enumerate(pages):
+            try:
+                self._page.goto(url, wait_until="networkidle", timeout=45000)
+                time.sleep(random.uniform(3.0, 7.0))
+                self._accept_cookies()
+                self._human_scroll()
+                if i < len(pages) - 1:
+                    self._sleep(12.0, 22.0)
+            except Exception as e:
+                logger.warning("Warm-up error en %s (no critico): %s", url, e)
+        logger.info("Warm-up completado (%d paginas).", len(pages))
 
     # ------------------------------------------------------------------
     # Browser
@@ -218,6 +249,7 @@ class IdealistaScraper:
         except ImportError:
             self._stealth_fn = None
 
+        logger.info("User-Agent seleccionado: %s", self._current_ua[:60])
         self._pw = sync_playwright().start()
         launch_kwargs = dict(
             user_data_dir=str(SESSION_DIR),
@@ -227,11 +259,7 @@ class IdealistaScraper:
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
             ],
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
+            user_agent=self._current_ua,
             locale="es-ES",
             viewport={"width": 1366, "height": 768},
         )
@@ -263,7 +291,39 @@ class IdealistaScraper:
     # Carga de pagina
     # ------------------------------------------------------------------
 
+    def _get_html_via_scrapedo(self, url: str, retries: int = 2) -> Optional[str]:
+        is_detail = "/inmueble/" in url
+        extra = "&timeout=15000" if is_detail else ""
+        variants = [
+            {"super": "true", "geoCode": "ES"},
+            {"render": "true", "geoCode": "ES"},
+            {"render": "true"},
+        ]
+        for params in variants:
+            qs = "&".join(f"{k}={v}" for k, v in params.items())
+            api_url = f"https://api.scrape.do/?token={SCRAPE_DO_TOKEN}&url={quote(url, safe='')}&{qs}{extra}"
+            for attempt in range(retries):
+                try:
+                    resp = requests.get(api_url, timeout=60)
+                    # 404 real de Idealista — no tiene sentido reintentar
+                    if resp.status_code == 404:
+                        logger.warning("Scrape.do: 404 en %s — perfil inexistente, saltando", url)
+                        return None
+                    if resp.status_code == 200 and len(resp.text) > 5000 and not _is_captcha(resp.text):
+                        logger.info("Scrape.do OK [%s]: %s (%d chars)", qs, url, len(resp.text))
+                        return resp.text
+                    logger.warning("Scrape.do [%s] intento %d: status=%d body=%s", qs, attempt + 1, resp.status_code, resp.text[:200])
+                except Exception as e:
+                    logger.error("Scrape.do [%s] error (intento %d): %s", qs, attempt + 1, e)
+                if attempt < retries - 1:
+                    time.sleep(5 * (attempt + 1))
+        return None
+
     def _get_html(self, url: str, retries: int = 3) -> Optional[str]:
+        # Modo Scrape.do: saltear browser completamente cuando el token está configurado
+        if SCRAPE_DO_TOKEN:
+            return self._get_html_via_scrapedo(url, retries)
+
         for attempt in range(retries):
             try:
                 self._page.goto(url, wait_until="networkidle", timeout=45000)
@@ -273,7 +333,7 @@ class IdealistaScraper:
                 html = self._page.content()
 
                 if _is_captcha(html):
-                    self._wait_captcha_solved(url)
+                    self._wait_captcha_solved()
                     self._page.goto(url, wait_until="networkidle", timeout=45000)
                     time.sleep(3)
                     self._accept_cookies()
@@ -299,8 +359,10 @@ class IdealistaScraper:
     # API publica
     # ------------------------------------------------------------------
 
-    def scrape_profile(self, profile_url: str) -> list[Property]:
-        logger.info("Scrapeando perfil: %s", profile_url)
+    def scrape_profile(self, profile_url: str, known_ids: set[str] = None) -> list[Property]:
+        limit = MAX_PROPERTIES_PER_AGENCY
+        known_ids = known_ids or set()
+        logger.info("Scrapeando perfil: %s (límite: %s)", profile_url, limit or "sin límite")
         properties: list[Property] = []
         page = 1
         while True:
@@ -312,28 +374,65 @@ class IdealistaScraper:
             if not item_urls:
                 logger.info("Sin mas propiedades en pagina %d. Total: %d", page, len(properties))
                 break
+            if limit:
+                remaining = limit - len(properties)
+                item_urls = item_urls[:remaining]
             for item_url in item_urls:
+                prop_id = self._extract_id(item_url)
+                if prop_id:
+                    self.seen_ids.add(prop_id)
+                if prop_id and prop_id in known_ids:
+                    logger.debug("Propiedad %s ya en BD — saltando detalle", prop_id)
+                    continue
                 prop = self._scrape_property(item_url)
                 if prop:
                     properties.append(prop)
                 self._sleep()
-            if not self._has_next_page(soup):
+            if (limit and len(properties) >= limit) or not self._has_next_page(soup):
                 break
             page += 1
             self._sleep()
+
+        # Eliminar URLs que aparecen en 2+ propiedades (logos/avatares de agencia)
+        if len(properties) > 1:
+            url_counts = Counter(u for p in properties for u in p.photo_urls)
+            shared = {u for u, n in url_counts.items() if n > 1}
+            if shared:
+                logger.debug("Filtrando %d URLs compartidas (logos/avatares)", len(shared))
+                for p in properties:
+                    kept = [(u, f, l) for u, f, l in zip(p.photo_urls, p.is_floor_plan, p.photo_labels) if u not in shared]
+                    if kept:
+                        p.photo_urls, p.is_floor_plan, p.photo_labels = map(list, zip(*kept))
+                    else:
+                        p.photo_urls, p.is_floor_plan, p.photo_labels = [], [], []
+
         return properties
 
-    def scrape_all_profiles(self) -> list[Property]:
+    def scrape_all_profiles(self, known_ids: set[str] = None) -> list[Property]:
         if not IDEALISTA_PROFILE_URLS:
             logger.warning("IDEALISTA_PROFILE_URLS vacio en .env")
             return []
-        self._start_browser()
-        try:
-            self._warm_up()
+
+        if SCRAPE_DO_TOKEN:
+            logger.info("Modo Scrape.do activo — sin navegador, sin captchas")
+            self.delay_range = (2.0, 5.0)
+            self.seen_ids.clear()
             all_props: list[Property] = []
             for url in IDEALISTA_PROFILE_URLS:
                 logger.info("--- Perfil: %s ---", url)
-                all_props.extend(self.scrape_profile(url))
+                all_props.extend(self.scrape_profile(url, known_ids=known_ids))
+                self._sleep(2.0, 4.0)
+            return all_props
+
+        self.seen_ids.clear()
+        self._clear_session()
+        self._start_browser()
+        try:
+            self._warm_up()
+            all_props = []
+            for url in IDEALISTA_PROFILE_URLS:
+                logger.info("--- Perfil: %s ---", url)
+                all_props.extend(self.scrape_profile(url, known_ids=known_ids))
                 self._sleep(15.0, 30.0)
             return all_props
         finally:
@@ -348,6 +447,11 @@ class IdealistaScraper:
     def _has_next_page(soup: BeautifulSoup) -> bool:
         return bool(soup.find("link", {"rel": "next"}) or soup.select_one("a.icon-arrow-right-after"))
 
+    @staticmethod
+    def _clean_url(url: str) -> str:
+        """Elimina query params (Google Translate, tracking, etc.) de URLs de Idealista."""
+        return url.split("?")[0]
+
     def _parse_listing_page(self, soup: BeautifulSoup) -> list[str]:
         try:
             hrefs: list[str] = self._page.evaluate("""
@@ -355,7 +459,12 @@ class IdealistaScraper:
                     .map(a => a.href).filter(h => h.includes('/inmueble/'))
             """)
             seen: set[str] = set()
-            urls = [h for h in hrefs if not (h in seen or seen.add(h))]
+            urls = []
+            for h in hrefs:
+                h = self._clean_url(h)
+                if h not in seen:
+                    seen.add(h)
+                    urls.append(h)
             if urls:
                 logger.info("Encontradas %d propiedades", len(urls))
                 return urls
@@ -367,6 +476,7 @@ class IdealistaScraper:
             href = a["href"]
             if not href.startswith("http"):
                 href = urljoin(BASE_URL, href)
+            href = self._clean_url(href)
             if href not in seen:
                 seen.add(href)
                 urls.append(href)
@@ -391,21 +501,60 @@ class IdealistaScraper:
         )
         prop.price = self._parse_price(prop.price_text)
         self._parse_features(soup, prop)
-        prop.photo_urls, prop.is_floor_plan = self._extract_photos(soup)
+        prop.photo_urls, prop.is_floor_plan, prop.photo_labels = self._extract_photos(soup)
+        logger.debug("Fotos extraidas para %s: %d URLs", prop.idealista_id, len(prop.photo_urls))
+        non_empty_labels = [l for l in prop.photo_labels if l]
+        if non_empty_labels:
+            logger.debug("Labels de fotos para %s: %s", prop.idealista_id, non_empty_labels)
+        if not prop.photo_urls:
+            logger.warning("Sin fotos para %s — buscando URLs de imagen en HTML...", prop.idealista_id)
+            html_str = str(soup)
+            img_matches = re.findall(r'https?://[^\s"\'<>]+\.(?:jpg|jpeg|png|webp)', html_str, re.IGNORECASE)
+            unique_imgs = list(dict.fromkeys(img_matches))[:5]
+            if unique_imgs:
+                logger.warning("  URLs de imagen encontradas en HTML: %s", unique_imgs)
+            else:
+                logger.warning("  No se encontraron URLs de imagen en el HTML")
+            # Buscar claves JS relacionadas con multimedia
+            for script in soup.find_all("script", string=True):
+                text = script.string or ""
+                for key in ('"images"', '"photos"', '"multimedia"', '"gallery"', '"pictures"', 'idealista.com/'):
+                    if key in text:
+                        snippet = text[max(0, text.index(key)-20):text.index(key)+200]
+                        logger.warning("  Clave '%s' en script: ...%s...", key, snippet)
+                        break
         return prop
 
-    def _extract_photos(self, soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
-        urls, flags = self._photos_from_embedded_json(soup)
+    @staticmethod
+    def _deduplicate_photos(urls: list[str], flags: list[bool], labels: list[str]) -> tuple[list[str], list[bool], list[str]]:
+        """Elimina duplicados: si la misma imagen existe en .webp y .jpg, conserva solo una."""
+        seen_base: dict[str, tuple[str, bool, str]] = {}
+        order: list[str] = []
+        for url, flag, label in zip(urls, flags, labels):
+            base = re.sub(r'\.[a-z]{2,4}$', '', url.split("/")[-1].split("?")[0])
+            if base not in seen_base:
+                seen_base[base] = (url, flag, label)
+                order.append(base)
+            else:
+                # Preferir webp sobre jpg sobre otros
+                existing_url = seen_base[base][0]
+                if url.endswith(".webp") and not existing_url.endswith(".webp"):
+                    seen_base[base] = (url, flag, label)
+        return [seen_base[b][0] for b in order], [seen_base[b][1] for b in order], [seen_base[b][2] for b in order]
+
+    def _extract_photos(self, soup: BeautifulSoup) -> tuple[list[str], list[bool], list[str]]:
+        urls, flags, labels = self._photos_from_embedded_json(soup)
         if urls:
-            return urls, flags
-        urls, flags = self._photos_from_html_gallery(soup)
+            return self._deduplicate_photos(urls, flags, labels)
+        urls, flags, labels = self._photos_from_html_gallery(soup)
         if urls:
-            return urls, flags
-        return self._photos_from_jsonld(soup)
+            return self._deduplicate_photos(urls, flags, labels)
+        urls, flags, labels = self._photos_from_jsonld(soup)
+        return self._deduplicate_photos(urls, flags, labels)
 
     @staticmethod
-    def _photos_from_embedded_json(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
-        urls, is_plan = [], []
+    def _photos_from_embedded_json(soup: BeautifulSoup) -> tuple[list[str], list[bool], list[str]]:
+        urls, is_plan, labels = [], [], []
         for script in soup.find_all("script", string=True):
             text = script.string or ""
             m = re.search(r'"images"\s*:\s*(\[.*?\])', text, re.DOTALL)
@@ -416,34 +565,90 @@ class IdealistaScraper:
                             u = _normalize_image_url(img.get("url", ""))
                             if u:
                                 urls.append(u)
-                                is_plan.append("plano" in (img.get("tag") or "").lower())
+                                tag = (img.get("tag") or "").strip()
+                                is_plan.append("plano" in tag.lower())
+                                labels.append(tag)
                     if urls:
-                        return urls, is_plan
+                        return urls, is_plan, labels
                 except Exception:
                     pass
-        return [], []
+        return [], [], []
 
     @staticmethod
-    def _photos_from_html_gallery(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
-        urls, is_plan = [], []
-        for sel in ["picture.gallery-image source", "img.gallery-image", "div.gallery img"]:
+    def _photos_from_html_gallery(soup: BeautifulSoup) -> tuple[list[str], list[bool], list[str]]:
+        _STATIC_SKIP = ("static/common", "icons/", "favicon", ".svg", ".gif", "avatar", "profilephotos")
+        urls: list[str] = []
+        is_plan: list[bool] = []
+        labels: list[str] = []
+        seen: set[str] = set()
+
+        def _add(src: str, alt: str = "") -> None:
+            src = _normalize_image_url(src)
+            if src and src.startswith("http") and src not in seen and not any(s in src for s in _STATIC_SKIP):
+                seen.add(src)
+                urls.append(src)
+                is_plan.append("plano" in alt.lower())
+                labels.append(alt.strip())
+
+        # 1. Selectores CSS específicos de galería Idealista (recorre TODOS, sin retorno anticipado)
+        gallery_selectors = [
+            "picture.gallery-image source",
+            "img.gallery-image",
+            "div.gallery img",
+            ".main-slider img",
+            ".detail-images img",
+            "li.image img",
+        ]
+        for sel in gallery_selectors:
             for el in soup.select(sel):
-                src = ""
                 if el.name == "source":
                     parts = [p.strip() for p in el.get("srcset", "").split(",") if p.strip()]
                     src = parts[-1].split(" ")[0] if parts else ""
                 else:
-                    src = el.get("src") or el.get("data-src") or ""
-                src = _normalize_image_url(src)
-                if src and src.startswith("http"):
+                    src = (el.get("data-ondemand-img") or el.get("data-src")
+                           or el.get("data-original") or el.get("src") or "")
+                _add(src, el.get("alt", ""))
+
+        # 2. Regex sobre el HTML completo — captura todas las fotos WEB_DETAIL de Idealista
+        for raw_url in re.findall(
+            r'https://img\d+\.idealista\.com/blur/WEB_DETAIL/[^\s"\'<>]+', str(soup)
+        ):
+            _add(raw_url)
+
+        if urls:
+            return urls, is_plan, labels
+
+        # 3. Fallback amplio — deduplicado por nombre de archivo base
+        for el in soup.find_all(["img", "source"]):
+            src = ""
+            for attr in ("data-ondemand-img", "data-src", "data-original", "src", "srcset"):
+                raw = el.get(attr, "")
+                if not raw:
+                    continue
+                if attr == "srcset":
+                    parts = [p.strip().split(" ")[0] for p in raw.split(",") if p.strip()]
+                    raw = parts[-1] if parts else ""
+                candidate = _normalize_image_url(raw)
+                if (candidate and candidate.startswith("http")
+                        and any(ext in candidate for ext in (".jpg", ".jpeg", ".png", ".webp"))
+                        and not any(s in candidate for s in _STATIC_SKIP)):
+                    src = candidate
+                    break
+            if src:
+                base = re.sub(r'\.[a-z]{2,4}$', '', src.split("/")[-1])
+                if base and base not in seen:
+                    seen.add(base)
                     urls.append(src)
-                    is_plan.append("plano" in (el.get("alt") or "").lower())
-            if urls:
+                    alt = (el.get("alt") or "").strip()
+                    is_plan.append("plano" in alt.lower())
+                    labels.append(alt)
+            if len(urls) >= 25:
                 break
-        return urls, is_plan
+
+        return urls, is_plan, labels
 
     @staticmethod
-    def _photos_from_jsonld(soup: BeautifulSoup) -> tuple[list[str], list[bool]]:
+    def _photos_from_jsonld(soup: BeautifulSoup) -> tuple[list[str], list[bool], list[str]]:
         urls = []
         for script in soup.select("script[type='application/ld+json']"):
             try:
@@ -458,7 +663,7 @@ class IdealistaScraper:
                         urls.append(_normalize_image_url(img))
             except Exception:
                 continue
-        return urls, [False] * len(urls)
+        return urls, [False] * len(urls), [""] * len(urls)
 
     @staticmethod
     def _extract_id(url: str) -> Optional[str]:

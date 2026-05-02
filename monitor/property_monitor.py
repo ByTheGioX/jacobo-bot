@@ -7,12 +7,14 @@ Monitor de propiedades: ejecuta el ciclo completo cada 24h.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 
 from scraper.idealista_scraper import IdealistaScraper, Property
 from photo_processor.photo_enhancer import PhotoEnhancer
 from wordpress.property_publisher import PropertyPublisher
 from database.db import Database
+from config.settings import SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX, SKIP_WORDPRESS
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ class RunStats:
 
 class PropertyMonitor:
     def __init__(self):
-        self.scraper = IdealistaScraper()
+        self.scraper = IdealistaScraper(delay_range=(SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX), headless=False)
         self.enhancer = PhotoEnhancer()
         self.publisher = PropertyPublisher()
         self.db = Database()
@@ -39,18 +41,21 @@ class PropertyMonitor:
         run_id = self.db.start_scrape_run()
 
         try:
-            # 1. Scrapear todas las propiedades actuales de Idealista
-            logger.info("=== Iniciando ciclo de scraping ===")
-            scraped_props = self.scraper.scrape_all_profiles()
-            stats.found = len(scraped_props)
-            logger.info(f"Propiedades encontradas en Idealista: {stats.found}")
-
-            # 2. IDs activos en nuestra DB
+            # 1. IDs ya conocidos en BD (para no re-scrapear detalles innecesariamente)
             known_ids = self.db.get_active_ids()
-            scraped_ids = {p.idealista_id for p in scraped_props}
+            if known_ids:
+                logger.info("Propiedades ya en BD: %d — solo se scrapearan las nuevas", len(known_ids))
+
+            # 2. Scrapear Idealista (saltando detalles de propiedades conocidas)
+            logger.info("=== Iniciando ciclo de scraping ===")
+            scraped_props = self.scraper.scrape_all_profiles(known_ids=known_ids)
+            # seen_ids: todos los IDs vistos en listings (nuevos + conocidos sin eliminar)
+            all_seen_ids = self.scraper.seen_ids | {p.idealista_id for p in scraped_props}
+            stats.found = len(all_seen_ids)
+            logger.info("Propiedades en Idealista: %d total (%d nuevas)", stats.found, len(scraped_props))
 
             # 3. Propiedades eliminadas de Idealista → eliminar de WP
-            removed_ids = known_ids - scraped_ids
+            removed_ids = known_ids - all_seen_ids
             for rid in removed_ids:
                 self._handle_removed(rid)
                 stats.removed += 1
@@ -97,14 +102,27 @@ class PropertyMonitor:
     # Internos
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _photo_folder_name(prop: Property) -> str:
+        m = re.search(r'/pro/([^/]+)/', prop.url)
+        profile = m.group(1) if m else prop.idealista_id
+        title = re.sub(r'[<>:"/\\|?*]', '', prop.title)[:60].strip()
+        return f"{title} - {profile}"
+
     def _process_and_publish(self, prop: Property, update: bool = False):
         # Mejorar fotos con Kie.ai
         processed_photos = self.enhancer.process_property_photos(
             prop.idealista_id,
             prop.photo_urls,
             prop.is_floor_plan,
+            prop.photo_labels,
+            folder_name=self._photo_folder_name(prop),
         )
         self.db.set_processed_photos(prop.idealista_id, processed_photos)
+
+        if SKIP_WORDPRESS:
+            logger.info("SKIP_WORDPRESS=true — publicación en WP omitida para %s", prop.idealista_id)
+            return
 
         # Obtener WP ID si es actualización
         wp_post_id = None
@@ -144,4 +162,5 @@ class PropertyMonitor:
             "has_pool": prop.has_pool,
             "has_terrace": prop.has_terrace,
             "photo_urls": prop.photo_urls,
+            "photo_labels": prop.photo_labels,
         }

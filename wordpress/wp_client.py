@@ -5,6 +5,7 @@ Gestiona posts, medios y metadatos de propiedades.
 
 import logging
 import mimetypes
+import time
 from pathlib import Path
 from typing import Optional, Any
 
@@ -21,6 +22,47 @@ class WPClient:
         self.base = f"{WP_URL}/wp-json/wp/v2"
         self.auth = HTTPBasicAuth(WP_USER, WP_APP_PASSWORD)
         self.session = requests.Session()
+        self._waf_bypassed = False
+        # Intentar bypass del WAF de Hostinger al iniciar
+        self._bypass_waf_if_needed()
+
+    def _bypass_waf_if_needed(self):
+        """Si el WAF bloquea con 403 HTML, usa Playwright para ejecutar el challenge JS y obtener la cookie."""
+        try:
+            r = self.session.get(f"{WP_URL}/wp-json/", timeout=10)
+            if r.status_code == 200 and "json" in r.headers.get("Content-Type", ""):
+                return  # Sin WAF, no hace falta nada
+            if r.status_code != 403 and "refresh" not in r.text[:500]:
+                return
+        except Exception:
+            return
+
+        logger.info("WAF detectado — usando Playwright para obtener cookies de sesión...")
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                )
+                page = context.new_page()
+                page.goto(f"{WP_URL}/wp-json/wp/v2/", wait_until="networkidle", timeout=30000)
+                time.sleep(4)  # dejar que el JS del challenge se ejecute
+                for cookie in context.cookies():
+                    self.session.cookies.set(
+                        cookie["name"], cookie["value"],
+                        domain=cookie.get("domain", "").lstrip("."),
+                    )
+                browser.close()
+            # Verificar si el bypass funcionó
+            r2 = self.session.get(f"{WP_URL}/wp-json/", timeout=10)
+            if r2.status_code == 200 and "json" in r2.headers.get("Content-Type", ""):
+                self._waf_bypassed = True
+                logger.info("WAF bypass exitoso — cookies de sesión activas")
+            else:
+                logger.warning("WAF bypass intentado pero sigue bloqueando (status %s)", r2.status_code)
+        except Exception as e:
+            logger.warning("Playwright WAF bypass falló: %s", e)
 
     def _get(self, endpoint: str, params: dict = None) -> Any:
         resp = self.session.get(
