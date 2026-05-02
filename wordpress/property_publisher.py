@@ -52,7 +52,7 @@ class PropertyPublisher:
         featured_id = media_ids[0] if media_ids else None
 
         # Taxonomías Houzez
-        status_label = "For Rent" if prop.operation_type == "rent" else "For Sale"
+        status_label = "En alquiler" if prop.operation_type == "rent" else "En venta"
         status_id = self.wp.get_or_create_term("property-status", status_label)
 
         type_label = _TYPE_MAP.get(prop.property_type.lower(), prop.property_type.capitalize() or "Propiedad")
@@ -119,10 +119,11 @@ class PropertyPublisher:
         context = f"Tipo: {prop.property_type}, {prop.rooms or '?'} hab., {prop.bathrooms or '?'} baños, {prop.area_m2 or '?'} m², {prop.location}."
         prompt = (
             "Eres un copywriter inmobiliario profesional en España. "
+            "IMPORTANTE: Responde ÚNICAMENTE en español. Está terminantemente prohibido usar inglés. "
             "Reescribe la siguiente descripción de una propiedad para que sea atractiva, única y no sea una copia literal. "
             "Conserva TODOS los datos concretos (habitaciones, metros, ubicación, características). "
-            "Escribe en español, tono profesional pero cercano, máximo 200 palabras. "
-            "Devuelve SOLO el texto de la descripción, sin encabezados ni comentarios.\n\n"
+            "Tono profesional pero cercano, máximo 200 palabras. "
+            "Devuelve SOLO el texto de la descripción en español, sin encabezados ni comentarios.\n\n"
             f"Contexto: {context}\n\n"
             f"Descripción original:\n{raw[:1500]}"
         )
@@ -152,12 +153,17 @@ class PropertyPublisher:
     def _upload_photos(self, idealista_id: str, processed_photos: list[dict]) -> list[int]:
         media_ids = []
         for idx, photo in enumerate(processed_photos):
+            # Solo subir fotos procesadas por KIE.AI — nunca las originales descargadas
+            if not photo.get("processed_url"):
+                logger.debug("Foto %d sin procesar por KIE.AI — omitiendo subida", idx + 1)
+                continue
             local_path = photo.get("local_path")
             if not local_path:
                 continue
             title = f"Propiedad {idealista_id} foto {idx + 1}"
             media = self.wp.upload_media(local_path, title)
             if media:
+                logger.info("  [WP] Foto %d subida (media ID %s)", idx + 1, media["id"])
                 media_ids.append(media["id"])
         return media_ids
 

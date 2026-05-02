@@ -176,5 +176,5 @@ class WPClient:
             created = self._post(taxonomy, {"name": name})
             return created["id"]
         except Exception as e:
-            logger.error(f"Error con término '{name}' en '{taxonomy}': {e}")
+            logger.debug("Taxonomía '%s' no encontrada en '%s' (normal sin Houzez): %s", name, taxonomy, e)
             return None
