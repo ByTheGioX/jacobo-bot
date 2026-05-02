@@ -16,12 +16,12 @@ function Title { Write-Host "`n=== $args ===" -ForegroundColor Cyan }
 # ----------------------------------------------------------
 # Variables — editar si es necesario
 # ----------------------------------------------------------
-$BOT_DIR   = "C:\jacobo-bot"
+$BOT_DIR   = "C:\Users\LIVETEAM\Desktop\jacobo-bot"
 $PYTHON_VERSION = "3.12.10"
 $PYTHON_URL = "https://www.python.org/ftp/python/$PYTHON_VERSION/python-$PYTHON_VERSION-amd64.exe"
 $GIT_URL    = "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe"
 $TASK_NAME  = "JacoboBot"
-$LOG_FILE   = "C:\jacobo-bot\data\jacobo_bot.log"
+$LOG_FILE   = "C:\Users\LIVETEAM\Desktop\jacobo-bot\data\jacobo_bot.log"
 
 Clear-Host
 Write-Host ""
