@@ -131,7 +131,14 @@ class PropertyPublisher:
             resp = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-                json={"model": OPENROUTER_MODEL, "messages": [{"role": "user", "content": prompt}], "max_tokens": 400},
+                json={
+                    "model": OPENROUTER_MODEL,
+                    "messages": [
+                        {"role": "system", "content": "Eres un copywriter inmobiliario español. SIEMPRE respondes en español. Nunca uses inglés."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_tokens": 400,
+                },
                 timeout=30,
             )
             resp.raise_for_status()
