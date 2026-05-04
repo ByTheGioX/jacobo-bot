@@ -518,7 +518,7 @@ def _wait_for_wa_ready(max_seconds=60, label=''):
                 return False
             if 'Cargando tus chats' not in src and 'Loading your chats' not in src and 'startup-screen' not in src:
                 return True
-            if i % 5 == 0:
+            if i > 0 and i % 10 == 0:
                 print(f'  {tag}Esperando pantalla de carga... ({i}s)')
         except Exception:
             pass
@@ -3483,6 +3483,7 @@ _wa_timeout = 120  # seconds — 120s para dar tiempo al QR si la sesión caduc�
 _wa_start = time.time()
 _qr_shown = False
 _loading_shown = False
+_loading_last_print = 0
 while time.time() - _wa_start < _wa_timeout:
     try:
         src = wb.web_browser.page_source
@@ -3492,9 +3493,14 @@ while time.time() - _wa_start < _wa_timeout:
                 print("  >> QR visible — escanea con tu movil ahora (tienes ~115s) <<")
                 _qr_shown = True
         elif 'Cargando tus chats' in src or 'Loading your chats' in src or 'startup-screen' in src:
+            elapsed = int(time.time() - _wa_start)
             if not _loading_shown:
                 print("  Pantalla de carga detectada, esperando que termine...")
                 _loading_shown = True
+                _loading_last_print = elapsed
+            elif elapsed - _loading_last_print >= 10:
+                print(f"    ...cargando ({elapsed}s)")
+                _loading_last_print = elapsed
         elif any(x in src for x in ['data-testid="chat-list"', 'aria-label="Lista de chats"',
                                      'data-testid="conversation-panel-wrapper"']):
             _wa_connected = True
