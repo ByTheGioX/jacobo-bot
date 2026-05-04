@@ -502,8 +502,10 @@ def _wa_is_connected():
         src = wb.web_browser.page_source
         if 'data-testid="qrcode"' in src or 'data-ref=' in src:
             return False
+        # Only use specific, reliable markers — 'side' and '_pn_list_' match too early
+        # during WhatsApp's loading animation and cause false positives.
         if any(x in src for x in ['data-testid="chat-list"', 'aria-label="Lista de chats"',
-                                   'side', '_pn_list_']):
+                                   'data-testid="conversation-panel-wrapper"']):
             return True
     except Exception:
         pass
@@ -520,7 +522,8 @@ def _open_wa_chat(link):
 
     clean_link = _clean_wa_link(link)
     wb.get(clean_link)
-    time.sleep(3)
+    # 5s instead of 3s — WhatsApp navigation triggers JS that takes time to settle
+    time.sleep(5)
 
     # Detectar desconexión después de navegar (el redirect al QR puede ocurrir aquí)
     if not _wa_is_connected():
@@ -545,12 +548,12 @@ def _open_wa_chat(link):
             else:
                 elem = wb.web_browser.find_element(By.CSS_SELECTOR, sel)
             elem.click()
-            time.sleep(2)
+            time.sleep(3)
             break
         except Exception:
             continue
 
-    # Esperar hasta 10s a que aparezca el input del chat
+    # Esperar hasta 20s a que aparezca el input del chat
     chat_input_selectors = [
         "footer div[contenteditable='true']",
         "div[contenteditable='true'][data-tab='10']",
@@ -559,7 +562,7 @@ def _open_wa_chat(link):
         "div[aria-placeholder='Escribe un mensaje']",
         "div[aria-placeholder='Type a message']",
     ]
-    for _ in range(10):
+    for _ in range(20):
         for sel in chat_input_selectors:
             try:
                 elem = wb.web_browser.find_element(By.CSS_SELECTOR, sel)
@@ -569,7 +572,7 @@ def _open_wa_chat(link):
                 continue
         time.sleep(1)
 
-    print('  [WARN] _open_wa_chat: chat input no encontrado tras 10s.')
+    print('  [WARN] _open_wa_chat: chat input no encontrado tras 20s.')
     return None
 
 
@@ -850,7 +853,23 @@ def scrape_photo_group():
             return photo_entries
 
         print('  Waiting for chat to load...')
-        time.sleep(10)
+        # Active wait: up to 20s polling for the message list to appear
+        _chat_ready = False
+        for _wait_i in range(20):
+            try:
+                src = wb.web_browser.page_source
+                if any(x in src for x in [
+                    'data-testid="msg-container"', 'data-testid="conversation-panel-wrapper"',
+                    'aria-label="Lista de mensajes"', 'class="message-in"', 'class="message-out"',
+                ]):
+                    _chat_ready = True
+                    print(f'    Chat cargado en {_wait_i + 1}s')
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+        if not _chat_ready:
+            print('    [WARN] Chat tardó más de 20s en cargar, continuando de todas formas...')
 
         # Scroll up to load more messages (load enough history to catch all photos)
         try:
@@ -3414,9 +3433,9 @@ wb.get("https://web.whatsapp.com")
 time.sleep(2)
 wb.dismiss_restore_dialog()
 
-print("Esperando conexion de WhatsApp (max 1 minuto)...")
+print("Esperando conexion de WhatsApp (max 2 minutos)...")
 _wa_connected = False
-_wa_timeout = 60  # seconds — si sesion ya activa conecta en 2-3s
+_wa_timeout = 120  # seconds — 120s para dar tiempo al QR si la sesión caducó
 _wa_start = time.time()
 _qr_shown = False
 while time.time() - _wa_start < _wa_timeout:
@@ -3424,10 +3443,10 @@ while time.time() - _wa_start < _wa_timeout:
         src = wb.web_browser.page_source
         if 'data-testid="qrcode"' in src or 'data-ref=' in src:
             if not _qr_shown:
-                print("  >> QR visible — escanea con tu movil ahora (tienes ~55s) <<")
+                print("  >> QR visible — escanea con tu movil ahora (tienes ~115s) <<")
                 _qr_shown = True
-        elif any(x in src for x in ['data-testid="chat-list"', 'data-testid="conversation-panel"',
-                                     '_pn_list_', 'side', 'aria-label="Lista de chats"']):
+        elif any(x in src for x in ['data-testid="chat-list"', 'aria-label="Lista de chats"',
+                                     'data-testid="conversation-panel-wrapper"']):
             _wa_connected = True
             elapsed = int(time.time() - _wa_start)
             print(f"  WhatsApp conectado OK ({elapsed}s)")
@@ -3442,6 +3461,10 @@ if not _wa_connected:
     print("  Cerrando. Vuelve a ejecutar y escanea el QR cuando aparezca.")
     wb.web_browser.quit()
     sys.exit(1)
+
+# Wait for WhatsApp UI to finish rendering before interacting with it
+print("  Esperando que la UI cargue completamente...")
+time.sleep(5)
 
 print("\n--- Running all photo modules ---\n")
 
