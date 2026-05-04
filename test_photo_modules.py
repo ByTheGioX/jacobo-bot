@@ -496,14 +496,45 @@ def _clean_wa_link(link):
     return link.replace("%20", "").lower().replace("api.", "web.")
 
 
+def _wa_is_loading():
+    """True si WhatsApp muestra la pantalla intermedia 'Cargando tus chats...'"""
+    try:
+        src = wb.web_browser.page_source
+        return ('Cargando tus chats' in src or 'Loading your chats' in src or
+                'startup-screen' in src)
+    except Exception:
+        return False
+
+
+def _wait_for_wa_ready(max_seconds=60, label=''):
+    """Bloquea hasta que WhatsApp salga de la pantalla de carga.
+    Retorna True si la UI quedó lista, False si apareció el QR o se agotó el tiempo."""
+    tag = f'[{label}] ' if label else ''
+    for i in range(max_seconds):
+        try:
+            src = wb.web_browser.page_source
+            if 'data-testid="qrcode"' in src or 'data-ref=' in src:
+                print(f'  {tag}WhatsApp desconectado (QR visible).')
+                return False
+            if 'Cargando tus chats' not in src and 'Loading your chats' not in src and 'startup-screen' not in src:
+                return True
+            if i % 5 == 0:
+                print(f'  {tag}Esperando pantalla de carga... ({i}s)')
+        except Exception:
+            pass
+        time.sleep(1)
+    print(f'  {tag}Timeout: WhatsApp no terminó de cargar en {max_seconds}s.')
+    return False
+
+
 def _wa_is_connected():
-    """True si WhatsApp Web muestra la interfaz principal (no el QR)."""
+    """True si WhatsApp Web muestra la interfaz principal (no el QR, no la pantalla de carga)."""
     try:
         src = wb.web_browser.page_source
         if 'data-testid="qrcode"' in src or 'data-ref=' in src:
             return False
-        # Only use specific, reliable markers — 'side' and '_pn_list_' match too early
-        # during WhatsApp's loading animation and cause false positives.
+        if 'Cargando tus chats' in src or 'Loading your chats' in src or 'startup-screen' in src:
+            return False
         if any(x in src for x in ['data-testid="chat-list"', 'aria-label="Lista de chats"',
                                    'data-testid="conversation-panel-wrapper"']):
             return True
@@ -515,19 +546,24 @@ def _wa_is_connected():
 def _open_wa_chat(link):
     """Navega a un chat de WhatsApp, maneja el diálogo intermedio si aparece,
     y devuelve el elemento chat input (o None si falla o WhatsApp está desconectado)."""
-    # Detectar desconexión antes de navegar
-    if not _wa_is_connected():
+    # Si WhatsApp está cargando, esperar antes de navegar
+    if _wa_is_loading():
+        print('  _open_wa_chat: WhatsApp en pantalla de carga, esperando...')
+        if not _wait_for_wa_ready(max_seconds=60, label='pre-nav'):
+            print('  [WARN] _open_wa_chat: WhatsApp no se recuperó, saltando.')
+            return None
+
+    # Verificar que no sea QR
+    if 'data-testid="qrcode"' in wb.web_browser.page_source or 'data-ref=' in wb.web_browser.page_source:
         print('  [WARN] _open_wa_chat: WhatsApp desconectado (QR visible), saltando.')
         return None
 
     clean_link = _clean_wa_link(link)
     wb.get(clean_link)
-    # 5s instead of 3s — WhatsApp navigation triggers JS that takes time to settle
-    time.sleep(5)
 
-    # Detectar desconexión después de navegar (el redirect al QR puede ocurrir aquí)
-    if not _wa_is_connected():
-        print('  [WARN] _open_wa_chat: WhatsApp se desconectó tras navegar, saltando.')
+    # Esperar que desaparezca la pantalla de carga antes de continuar
+    if not _wait_for_wa_ready(max_seconds=45, label='post-nav'):
+        print('  [WARN] _open_wa_chat: WhatsApp no cargó tras navegar, saltando.')
         return None
 
     # Clickear "Continuar al chat" / "Abrir chat" si WhatsApp muestra diálogo intermedio
@@ -853,11 +889,19 @@ def scrape_photo_group():
             return photo_entries
 
         print('  Waiting for chat to load...')
-        # Active wait: up to 20s polling for the message list to appear
+        # First: wait out any "Cargando tus chats..." splash screen
+        if _wa_is_loading():
+            print('  Pantalla de carga detectada, esperando que desaparezca...')
+            _wait_for_wa_ready(max_seconds=45, label='scrape_group')
+        # Then: active wait up to 20s for the message list to appear
         _chat_ready = False
         for _wait_i in range(20):
             try:
                 src = wb.web_browser.page_source
+                # Also wait if loading screen reappeared mid-navigation
+                if 'Cargando tus chats' in src or 'Loading your chats' in src:
+                    time.sleep(1)
+                    continue
                 if any(x in src for x in [
                     'data-testid="msg-container"', 'data-testid="conversation-panel-wrapper"',
                     'aria-label="Lista de mensajes"', 'class="message-in"', 'class="message-out"',
@@ -3438,13 +3482,19 @@ _wa_connected = False
 _wa_timeout = 120  # seconds — 120s para dar tiempo al QR si la sesión caducó
 _wa_start = time.time()
 _qr_shown = False
+_loading_shown = False
 while time.time() - _wa_start < _wa_timeout:
     try:
         src = wb.web_browser.page_source
         if 'data-testid="qrcode"' in src or 'data-ref=' in src:
+            _loading_shown = False
             if not _qr_shown:
                 print("  >> QR visible — escanea con tu movil ahora (tienes ~115s) <<")
                 _qr_shown = True
+        elif 'Cargando tus chats' in src or 'Loading your chats' in src or 'startup-screen' in src:
+            if not _loading_shown:
+                print("  Pantalla de carga detectada, esperando que termine...")
+                _loading_shown = True
         elif any(x in src for x in ['data-testid="chat-list"', 'aria-label="Lista de chats"',
                                      'data-testid="conversation-panel-wrapper"']):
             _wa_connected = True
@@ -3456,15 +3506,16 @@ while time.time() - _wa_start < _wa_timeout:
     time.sleep(2)
 
 if not _wa_connected:
-    print("\n[ERROR] WhatsApp no se conecto en 1 minuto.")
+    print("\n[ERROR] WhatsApp no se conecto en 2 minutos.")
     print("  Posibles causas: QR no escaneado, sesion caducada, sin internet.")
     print("  Cerrando. Vuelve a ejecutar y escanea el QR cuando aparezca.")
     wb.web_browser.quit()
     sys.exit(1)
 
-# Wait for WhatsApp UI to finish rendering before interacting with it
-print("  Esperando que la UI cargue completamente...")
-time.sleep(5)
+# Esperar que desaparezca cualquier pantalla de carga residual antes de interactuar
+if _wa_is_loading():
+    print("  Pantalla de carga residual detectada, esperando...")
+    _wait_for_wa_ready(max_seconds=30, label='startup')
 
 print("\n--- Running all photo modules ---\n")
 
