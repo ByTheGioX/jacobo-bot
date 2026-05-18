@@ -27,7 +27,7 @@ from urllib.parse import urljoin, quote
 import requests
 from bs4 import BeautifulSoup
 
-from config.settings import IDEALISTA_PROFILE_URLS, MAX_PROPERTIES_PER_AGENCY, SCRAPE_DO_TOKEN, PROXY_SERVER, PROXY_USER, PROXY_PASSWORD
+from config.settings import IDEALISTA_PROFILE_URLS, MAX_PROPERTIES_PER_AGENCY, SCRAPE_DO_TOKEN, SCRAPE_DO_TOKENS, PROXY_SERVER, PROXY_USER, PROXY_PASSWORD
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +294,7 @@ class IdealistaScraper:
     def _get_html_via_scrapedo(self, url: str, retries: int = 2) -> Optional[str]:
         is_detail = "/inmueble/" in url
         extra = "&timeout=15000" if is_detail else ""
+        tokens = SCRAPE_DO_TOKENS if SCRAPE_DO_TOKENS else [SCRAPE_DO_TOKEN]
         variants = [
             {"super": "true", "geoCode": "ES"},
             {"render": "true", "geoCode": "ES"},
@@ -301,22 +302,26 @@ class IdealistaScraper:
         ]
         for params in variants:
             qs = "&".join(f"{k}={v}" for k, v in params.items())
-            api_url = f"https://api.scrape.do/?token={SCRAPE_DO_TOKEN}&url={quote(url, safe='')}&{qs}{extra}"
-            for attempt in range(retries):
-                try:
-                    resp = requests.get(api_url, timeout=60)
-                    # 404 real de Idealista — no tiene sentido reintentar
-                    if resp.status_code == 404:
-                        logger.warning("Scrape.do: 404 en %s — perfil inexistente, saltando", url)
-                        return None
-                    if resp.status_code == 200 and len(resp.text) > 5000 and not _is_captcha(resp.text):
-                        logger.info("Scrape.do OK [%s]: %s (%d chars)", qs, url, len(resp.text))
-                        return resp.text
-                    logger.warning("Scrape.do [%s] intento %d: status=%d body=%s", qs, attempt + 1, resp.status_code, resp.text[:200])
-                except Exception as e:
-                    logger.error("Scrape.do [%s] error (intento %d): %s", qs, attempt + 1, e)
-                if attempt < retries - 1:
-                    time.sleep(5 * (attempt + 1))
+            for token_idx, token in enumerate(tokens):
+                for attempt in range(retries):
+                    try:
+                        api_url = f"https://api.scrape.do/?token={token}&url={quote(url, safe='')}&{qs}{extra}"
+                        resp = requests.get(api_url, timeout=60)
+                        if resp.status_code == 404:
+                            logger.warning("Scrape.do: 404 en %s — perfil inexistente, saltando", url)
+                            return None
+                        if resp.status_code == 401:
+                            logger.warning("Scrape.do token %d agotado — rotando al siguiente", token_idx + 1)
+                            break  # probar siguiente token
+                        if resp.status_code == 200 and len(resp.text) > 5000 and not _is_captcha(resp.text):
+                            logger.info("Scrape.do OK [token%d/%s]: %s (%d chars)", token_idx + 1, qs, url, len(resp.text))
+                            return resp.text
+                        logger.warning("Scrape.do [token%d/%s] intento %d: status=%d body=%s", token_idx + 1, qs, attempt + 1, resp.status_code, resp.text[:200])
+                    except Exception as e:
+                        logger.error("Scrape.do [token%d/%s] error (intento %d): %s", token_idx + 1, qs, attempt + 1, e)
+                    if attempt < retries - 1:
+                        time.sleep(5 * (attempt + 1))
+        logger.error("Scrape.do: todos los tokens agotados para %s", url)
         return None
 
     def _get_html(self, url: str, retries: int = 3) -> Optional[str]:

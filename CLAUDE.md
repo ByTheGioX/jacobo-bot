@@ -85,6 +85,17 @@ python main.py --search "Piso de 2 habitaciones en Málaga, 200k€" --email buy
 python main.py --dashboard
 ```
 
+### Cómo ejecutar en Windows (para el usuario, sin conocimientos técnicos)
+
+1. Abrir el Explorador de archivos y navegar a la carpeta `jacobo-bot`
+2. Clic en la barra de direcciones (donde pone la ruta), escribir `cmd` y pulsar Enter
+3. En la ventana negra que aparece, escribir el comando y pulsar Enter:
+   - **Prueba de 1 ciclo completo:** `python main.py --once`
+   - **Modo continuo (cada 72h):** `python main.py`
+   - **Solo scrapear sin publicar:** `python main.py --scrape-only`
+   - **Ver estadísticas:** `python main.py --dashboard`
+4. No cerrar la ventana negra mientras se ejecuta
+
 ### Desarrollo
 
 ```bash
@@ -115,7 +126,12 @@ Toda la configuración vive en `.env`. Variables clave:
 
 ### DataDome & Anti-Detección
 
-El scraper usa **Camoufox** (basado en Firefox) como método principal para eludir DataDome. Si no está disponible, cae back a Playwright Chromium con plugins de stealth. Cuando aparece un captcha y `--show-browser` está activo, el scraper **se pausa automáticamente** hasta que lo resuelvas en el navegador visible—no hay intervención manual necesaria más allá del captcha mismo. Si tu IP está completamente bloqueada, prueba desde un hotspot móvil.
+**NO usar Camoufox.** El método de anti-detección es exclusivamente **Scrape.do** (via `SCRAPE_DO_TOKEN`).
+
+Estrategia de cuentas Scrape.do:
+- **Carga inicial**: rotar 3 cuentas para distribuir los ~2.440 tokens necesarios
+- **Operación normal (cada 72h)**: rotar 2 cuentas activas (~280 tokens/ejecución), la tercera queda de reserva
+- Si una cuenta se bloquea, se reemplaza por la de reserva sin más
 
 ### Costos de Procesamiento de Fotos
 

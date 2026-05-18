@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from photo_processor.kie_ai_client import KieAiClient
+from photo_processor.photo_classifier import select_best_photos
 from config.settings import MAX_PHOTOS_PER_PROPERTY, ENABLE_HOME_STAGING
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ class PhotoEnhancer:
         raw_dir.mkdir(parents=True, exist_ok=True)
         processed_dir.mkdir(parents=True, exist_ok=True)
 
-        selected = _select_photos(photo_urls, is_floor_plan_flags, MAX_PHOTOS_PER_PROPERTY)
+        selected = select_best_photos(photo_urls, is_floor_plan_flags, photo_labels, MAX_PHOTOS_PER_PROPERTY)
         url_to_label = dict(zip(photo_urls, photo_labels)) if photo_labels else {}
         if not selected:
             return []

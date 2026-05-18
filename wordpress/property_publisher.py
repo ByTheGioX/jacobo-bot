@@ -51,63 +51,85 @@ class PropertyPublisher:
         media_ids = self._upload_photos(prop.idealista_id, processed_photos)
         featured_id = media_ids[0] if media_ids else None
 
-        # Taxonomías Houzez
+        # Taxonomías Houzez (REST base usa guiones bajos, no guiones)
         status_label = "En alquiler" if prop.operation_type == "rent" else "En venta"
-        status_id = self.wp.get_or_create_term("property-status", status_label)
+        status_id = self.wp.get_or_create_term("property_status", status_label)
 
         type_label = _TYPE_MAP.get(prop.property_type.lower(), prop.property_type.capitalize() or "Propiedad")
-        type_id = self.wp.get_or_create_term("property-type", type_label)
+        type_id = self.wp.get_or_create_term("property_type", type_label)
 
-        city = (prop.location.split(",")[0].strip() if prop.location else "") or "Málaga"
-        city_id = self.wp.get_or_create_term("property-city", city)
+        # Parsear ubicación: "Calle Foo, Barrio, Ciudad" → city = última parte
+        location_parts = [p.strip() for p in (prop.location or "").split(",") if p.strip()]
+        city = location_parts[-1] if location_parts else "Málaga"
+        area = location_parts[1] if len(location_parts) > 2 else ""
+        address = location_parts[0] if location_parts else ""
 
+        city_id  = self.wp.get_or_create_term("property_city", city)
+        area_id  = self.wp.get_or_create_term("property_area", area) if area else None
         feature_ids = self._get_feature_ids(prop)
 
-        # Meta campos Houzez
+        title   = _clean_text(prop.title)
+        content = self._rewrite_description(_clean_text(prop.description), prop)
+        excerpt = self._build_excerpt(prop)
+
+        # Meta campos Houzez — se guardan vía XML-RPC (REST API no los persiste)
         meta: dict = {
-            "FAVE_PROPERTY_PRICE": str(prop.price or 0),
-            "FAVE_PROPERTY_ID": f"idealista-{prop.idealista_id}",
-            "FAVE_PROPERTY_MAP_ADDRESS": prop.location or "",
+            "fave_property_price":        str(prop.price or 0),
+            "fave_property_price_postfix": "EUR",
+            "fave_property_id":           f"idealista-{prop.idealista_id}",
+            "fave_property_map_address":  prop.location or "",
+            "fave_property_map_zoom":     "14",
+            "fave_property_content":      excerpt,
         }
         if prop.area_m2:
-            meta["FAVE_PROPERTY_SIZE"] = str(prop.area_m2)
+            meta["fave_property_size"]        = str(int(prop.area_m2))
+            meta["fave_property_size_prefix"] = "m2"
         if prop.rooms:
-            meta["FAVE_PROPERTY_BEDROOMS"] = str(prop.rooms)
+            meta["fave_property_bedrooms"] = str(prop.rooms)
         if prop.bathrooms:
-            meta["FAVE_PROPERTY_BATHROOMS"] = str(prop.bathrooms)
+            meta["fave_property_bathrooms"] = str(prop.bathrooms)
+        if prop.floor:
+            meta["fave_property_floor"] = prop.floor
         if prop.has_parking:
-            meta["FAVE_PROPERTY_GARAGE"] = "1"
-        if len(media_ids) > 1:
-            meta["fave_property_images"] = ",".join(str(i) for i in media_ids[1:])
+            meta["fave_property_garage"] = "1"
+        if media_ids:
+            meta["fave_property_images"] = [str(i) for i in media_ids]
 
-        title = _clean_text(prop.title)
-        content = self._rewrite_description(_clean_text(prop.description), prop)
-
+        # REST API: estructura del post + taxonomías (sin meta — se ponen vía XML-RPC)
         post_data: dict = {
-            "title": title,
+            "title":   title,
             "content": content,
-            "status": "publish",
-            "meta": meta,
+            "excerpt": excerpt,
+            "status":  "publish",
         }
         if featured_id:
             post_data["featured_media"] = featured_id
         if status_id:
-            post_data["property-status"] = [status_id]
+            post_data["property_status"] = [status_id]
         if type_id:
-            post_data["property-type"] = [type_id]
+            post_data["property_type"] = [type_id]
         if city_id:
-            post_data["property-city"] = [city_id]
+            post_data["property_city"] = [city_id]
+        if area_id:
+            post_data["property_area"] = [area_id]
         if feature_ids:
-            post_data["property-feature"] = feature_ids
+            post_data["property_feature"] = feature_ids
 
         try:
             if existing_wp_id:
                 result = self.wp.update_post(WP_PROPERTY_REST_BASE, existing_wp_id, post_data)
-                logger.info("Propiedad %s actualizada en WP (ID %s)", prop.idealista_id, existing_wp_id)
+                wp_id = existing_wp_id
+                logger.info("Propiedad %s actualizada en WP (ID %s)", prop.idealista_id, wp_id)
             else:
                 result = self.wp.create_post(WP_PROPERTY_REST_BASE, post_data)
-                logger.info("Propiedad %s creada en WP (ID %s)", prop.idealista_id, result["id"])
-            return result["id"]
+                wp_id = result["id"]
+                logger.info("Propiedad %s creada en WP (ID %s)", prop.idealista_id, wp_id)
+            # Meta campos Houzez vía XML-RPC (REST API no los persiste correctamente)
+            self.wp.set_post_meta(wp_id, meta)
+            # Adjuntar todas las fotos al post para que Houzez las muestre en la galería
+            if media_ids:
+                self.wp.attach_media_to_post(media_ids, wp_id)
+            return wp_id
         except Exception as e:
             logger.error("Error publicando propiedad %s en WP: %s", prop.idealista_id, e)
             return None
@@ -144,11 +166,28 @@ class PropertyPublisher:
             resp.raise_for_status()
             rewritten = resp.json()["choices"][0]["message"]["content"].strip()
             if rewritten:
-                logger.info("Descripción reescrita con IA (%d → %d chars)", len(raw), len(rewritten))
+                logger.info("Descripcion reescrita con IA (%d -> %d chars)", len(raw), len(rewritten))
                 return rewritten
         except Exception as e:
             logger.warning("Error reescribiendo descripción con IA: %s — usando original", e)
         return raw
+
+    def _build_excerpt(self, prop: Property) -> str:
+        """Genera un resumen corto con los datos clave de la propiedad."""
+        parts = []
+        if prop.property_type:
+            parts.append(prop.property_type.capitalize())
+        if prop.area_m2:
+            parts.append(f"{int(prop.area_m2)} m²")
+        if prop.rooms:
+            parts.append(f"{prop.rooms} hab.")
+        if prop.bathrooms:
+            parts.append(f"{prop.bathrooms} baños")
+        if prop.floor:
+            parts.append(f"Planta {prop.floor}")
+        if prop.location:
+            parts.append(prop.location)
+        return " · ".join(parts) if parts else ""
 
     def unpublish(self, wp_post_id: int):
         try:
@@ -184,7 +223,7 @@ class PropertyPublisher:
             features.append("Terraza")
         ids = []
         for name in features:
-            fid = self.wp.get_or_create_term("property-feature", name)
+            fid = self.wp.get_or_create_term("property_feature", name)
             if fid:
                 ids.append(fid)
         return ids

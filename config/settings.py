@@ -121,15 +121,15 @@ PROXY_USER: str = _get("PROXY_USER", "")
 PROXY_PASSWORD: str = _get("PROXY_PASSWORD", "")
 
 # Scheduler
-SCRAPE_HOUR: int = _int("SCRAPE_HOUR", 3)
-SCRAPE_MINUTE: int = _int("SCRAPE_MINUTE", 0)
+SCRAPE_INTERVAL_HOURS: int = _int("SCRAPE_INTERVAL_HOURS", 72)
 
 # Scraper delays
 SCRAPE_DELAY_MIN: float = _float("SCRAPE_DELAY_MIN", 25.0)
 SCRAPE_DELAY_MAX: float = _float("SCRAPE_DELAY_MAX", 55.0)
 
-# Scrape.do — fallback anti-bloqueo para DataDome
-SCRAPE_DO_TOKEN: str = _get("SCRAPE_DO_TOKEN")
+# Scrape.do — tokens rotativos (lista) y token único legacy
+SCRAPE_DO_TOKENS: list[str] = [t for t in _list("SCRAPE_DO_TOKENS") if t]
+SCRAPE_DO_TOKEN: str = SCRAPE_DO_TOKENS[0] if SCRAPE_DO_TOKENS else _get("SCRAPE_DO_TOKEN")
 
 # OpenRouter (reemplaza a Claude AI)
 OPENROUTER_API_KEY: str = _get("OPENROUTER_API_KEY")

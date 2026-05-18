@@ -6,6 +6,7 @@ Gestiona posts, medios y metadatos de propiedades.
 import logging
 import mimetypes
 import time
+import xmlrpc.client
 from pathlib import Path
 from typing import Optional, Any
 
@@ -132,7 +133,7 @@ class WPClient:
     # Media
     # ------------------------------------------------------------------
 
-    def upload_media(self, file_path: str, title: str = "") -> Optional[dict]:
+    def upload_media(self, file_path: str, title: str = "", post_id: int = 0) -> Optional[dict]:
         """Sube una imagen a la biblioteca de medios de WordPress."""
         path = Path(file_path)
         if not path.exists():
@@ -156,16 +157,57 @@ class WPClient:
                 )
                 resp.raise_for_status()
                 media = resp.json()
-                if title:
-                    self._put(f"media/{media['id']}", {"title": title, "alt_text": title})
+                update = {"title": title, "alt_text": title} if title else {}
+                if post_id:
+                    update["post"] = post_id
+                if update:
+                    self._put(f"media/{media['id']}", update)
                 return media
         except Exception as e:
             logger.error(f"Error subiendo media {file_path}: {e}")
             return None
 
+    def attach_media_to_post(self, media_ids: list[int], post_id: int) -> None:
+        """Adjunta imágenes al post para que Houzez las muestre en la galería."""
+        for mid in media_ids:
+            try:
+                self._put(f"media/{mid}", {"post": post_id})
+            except Exception as e:
+                logger.debug("No se pudo adjuntar media %s a post %s: %s", mid, post_id, e)
+
     # ------------------------------------------------------------------
     # Taxonomy (categorías, tags)
     # ------------------------------------------------------------------
+
+    def set_post_meta(self, post_id: int, meta: dict) -> None:
+        """Set post custom fields via XML-RPC (REST API cannot save Houzez fave_property_* meta)."""
+        proxy = xmlrpc.client.ServerProxy(f"{WP_URL}/xmlrpc.php")
+        # Get existing custom fields to update by ID (avoids duplicates on re-publish)
+        existing: dict[str, list[str]] = {}
+        try:
+            post = proxy.wp.getPost(1, WP_USER, WP_APP_PASSWORD, post_id, ["custom_fields"])
+            for cf in post.get("custom_fields", []):
+                existing.setdefault(cf["key"], []).append(cf["id"])
+        except Exception as e:
+            logger.debug("XML-RPC getPost failed (non-critical): %s", e)
+
+        custom_fields = []
+        for key, value in meta.items():
+            values = value if isinstance(value, list) else [value]
+            existing_ids = existing.get(key, [])
+            for i, v in enumerate(values):
+                entry = {"key": key, "value": str(v)}
+                if i < len(existing_ids):
+                    entry["id"] = existing_ids[i]
+                custom_fields.append(entry)
+
+        if not custom_fields:
+            return
+        try:
+            proxy.wp.editPost(1, WP_USER, WP_APP_PASSWORD, post_id, {"custom_fields": custom_fields})
+            logger.debug("Meta XML-RPC set para post %s: %d campos", post_id, len(custom_fields))
+        except Exception as e:
+            logger.error("XML-RPC set_post_meta falló para post %s: %s", post_id, e)
 
     def get_or_create_term(self, taxonomy: str, name: str) -> Optional[int]:
         try:
