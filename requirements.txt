@@ -17,5 +17,9 @@ python-dotenv==1.0.1
 # AI (opcional)
 anthropic==0.40.0
 
+# Procesamiento de imágenes (deduplicación pHash y verificación retroactiva)
+Pillow>=10.0.0
+imagehash>=4.3.0
+
 # Tipado
 typing_extensions==4.12.2

@@ -14,6 +14,7 @@ from scraper.idealista_scraper import IdealistaScraper, Property
 from photo_processor.photo_enhancer import PhotoEnhancer
 from wordpress.property_publisher import PropertyPublisher
 from database.db import Database
+from monitor.processing_report import CycleReporter, PropertyReport
 from config.settings import SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX, SKIP_WORDPRESS
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class PropertyMonitor:
         """Ejecuta un ciclo completo de monitoreo."""
         stats = RunStats()
         run_id = self.db.start_scrape_run()
+        self.reporter = CycleReporter()
 
         try:
             # 1. IDs ya conocidos en BD (para no re-scrapear detalles innecesariamente)
@@ -67,14 +69,28 @@ class PropertyMonitor:
 
                     if is_new:
                         logger.info(f"[NUEVA] {prop.idealista_id} — {prop.title[:50]}")
-                        self._process_and_publish(prop)
+                        rep = self.reporter.new_property(prop.idealista_id, prop.title, prop.url)
+                        rep.photos_scraped = len(prop.photo_urls)
+                        self._process_and_publish(prop, rep)
                         stats.new += 1
                     elif was_updated:
                         logger.info(f"[ACTUALIZADA] {prop.idealista_id}")
-                        self._process_and_publish(prop, update=True)
+                        rep = self.reporter.new_property(prop.idealista_id, prop.title, prop.url)
+                        rep.photos_scraped = len(prop.photo_urls)
+                        self._process_and_publish(prop, rep, update=True)
                         stats.updated += 1
                     else:
-                        logger.debug(f"[SIN CAMBIOS] {prop.idealista_id}")
+                        # Reintentar publicación si falló antes (no tiene wp_post_id)
+                        db_prop = self.db.get_property(prop.idealista_id)
+                        if db_prop and not db_prop.get("wp_post_id"):
+                            logger.info(f"[REINTENTO] {prop.idealista_id} — sin wp_post_id, reintentando publicación")
+                            rep = self.reporter.new_property(prop.idealista_id, prop.title, prop.url)
+                            rep.photos_scraped = len(prop.photo_urls)
+                            rep.note("Reintento: propiedad sin wp_post_id de ciclo anterior")
+                            self._process_and_publish(prop, rep)
+                            stats.new += 1
+                        else:
+                            logger.debug(f"[SIN CAMBIOS] {prop.idealista_id}")
 
                 except Exception as e:
                     logger.error(f"Error procesando propiedad {prop.idealista_id}: {e}")
@@ -95,6 +111,12 @@ class PropertyMonitor:
         except Exception as e:
             logger.error(f"Error crítico en ciclo de monitoreo: {e}")
             self.db.finish_scrape_run(run_id, {}, error=str(e))
+        finally:
+            # Volcar reporte estructurado (siempre, incluso si hubo error)
+            try:
+                self.reporter.flush()
+            except Exception as e:
+                logger.error("Error volcando reporte de ciclo: %s", e)
 
         return stats
 
@@ -109,7 +131,7 @@ class PropertyMonitor:
         title = re.sub(r'[<>:"/\\|?*]', '', prop.title)[:60].strip()
         return f"{title} - {profile}"
 
-    def _process_and_publish(self, prop: Property, update: bool = False):
+    def _process_and_publish(self, prop: Property, rep: PropertyReport, update: bool = False):
         # Mejorar fotos con Kie.ai
         processed_photos = self.enhancer.process_property_photos(
             prop.idealista_id,
@@ -117,11 +139,24 @@ class PropertyMonitor:
             prop.is_floor_plan,
             prop.photo_labels,
             folder_name=self._photo_folder_name(prop),
+            report=rep,
         )
+
+        # Si el enhancer devuelve lista vacía = fallo de KIE → NO subir a WP (copyright)
+        if not processed_photos:
+            logger.warning(
+                "[SKIP-WP] Propiedad %s no se publica en WP — fotos no procesadas (se reintentará próximo ciclo)",
+                prop.idealista_id,
+            )
+            rep.wp_action = "aborted"
+            return
+
         self.db.set_processed_photos(prop.idealista_id, processed_photos)
 
         if SKIP_WORDPRESS:
             logger.info("SKIP_WORDPRESS=true — publicación en WP omitida para %s", prop.idealista_id)
+            rep.wp_action = "skipped"
+            rep.note("SKIP_WORDPRESS=true")
             return
 
         # Obtener WP ID si es actualización
@@ -131,9 +166,14 @@ class PropertyMonitor:
             wp_post_id = db_prop.get("wp_post_id") if db_prop else None
 
         # Publicar en WordPress
-        new_wp_id = self.publisher.publish(prop, processed_photos, wp_post_id)
+        new_wp_id = self.publisher.publish(prop, processed_photos, wp_post_id, report=rep)
         if new_wp_id:
             self.db.set_wp_post_id(prop.idealista_id, new_wp_id)
+            rep.wp_post_id = new_wp_id
+            rep.wp_action = "updated" if wp_post_id else "created"
+        else:
+            rep.wp_action = "aborted"
+            rep.note("WP publish devolvió None")
 
     def _handle_removed(self, idealista_id: str):
         db_prop = self.db.get_property(idealista_id)

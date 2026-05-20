@@ -16,7 +16,7 @@ from typing import Optional
 
 from photo_processor.kie_ai_client import KieAiClient
 from photo_processor.photo_classifier import select_best_photos
-from config.settings import MAX_PHOTOS_PER_PROPERTY, ENABLE_HOME_STAGING
+from config.settings import MAX_PHOTOS_PER_PROPERTY
 
 logger = logging.getLogger(__name__)
 
@@ -32,24 +32,15 @@ _FLOOR_PLAN_PATTERNS = [
 
 _VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".webm")
 
-_LABEL_TO_ROOM_TYPE = {
-    "salon": "salon", "salón": "salon", "living": "salon", "comedor": "salon",
-    "cocina": "cocina", "kitchen": "cocina",
-    "dormitorio": "dormitorio", "habitacion": "dormitorio", "habitación": "dormitorio",
-    "dormitorio principal": "dormitorio_principal", "suite": "dormitorio_principal",
-    "baño": "bano", "bano": "bano", "aseo": "bano",
-    "terraza": "terraza", "balcón": "terraza", "balcon": "terraza", "patio": "terraza",
-    "jardín": "jardin", "jardin": "jardin", "garden": "jardin",
-    "garaje": "garaje", "parking": "garaje",
+# Mapeo de room_type del clasificador → hint específico de Home Staging
+_STAGING_ROOM_MAP = {
+    "salon": "salon",
+    "cocina": "cocina",
+    "dormitorio": "dormitorio",
+    "bano": "bano",
+    "terraza": "terraza",
+    "exterior": "jardin",
 }
-
-
-def _label_to_room_type(label: str) -> Optional[str]:
-    low = label.lower()
-    for key, room_type in sorted(_LABEL_TO_ROOM_TYPE.items(), key=lambda x: len(x[0]), reverse=True):
-        if key in low:
-            return room_type
-    return None
 
 
 def _sanitize_folder(name: str) -> str:
@@ -118,6 +109,7 @@ class PhotoEnhancer:
         is_floor_plan_flags: list[bool],
         photo_labels: list[str] = None,
         folder_name: str = None,
+        report=None,
     ) -> list[dict]:
         folder = _sanitize_folder(folder_name) if folder_name else idealista_id
         raw_dir = PROCESSED_DIR / folder / "raw"
@@ -126,54 +118,76 @@ class PhotoEnhancer:
         processed_dir.mkdir(parents=True, exist_ok=True)
 
         selected = select_best_photos(photo_urls, is_floor_plan_flags, photo_labels, MAX_PHOTOS_PER_PROPERTY)
-        url_to_label = dict(zip(photo_urls, photo_labels)) if photo_labels else {}
         if not selected:
+            logger.warning("Propiedad %s: 0 fotos seleccionadas por el clasificador", idealista_id)
+            if report is not None:
+                report.note("0 fotos seleccionadas (clasificador)")
             return []
+
+        if report is not None:
+            report.photos_selected = len(selected)
+            report.photos_dedupe_removed = max(0, len([u for u, f in zip(photo_urls, is_floor_plan_flags) if not f]) - len(selected))
+            report.photos_home_staging = sum(1 for p in selected if p.get("empty"))
 
         # Paso 1: descargar originales — salta si ya existe el archivo cacheado por URL
         raw_paths: dict[int, Optional[str]] = {}
-        for idx, (url, is_plan) in enumerate(selected):
+        for idx, photo in enumerate(selected):
+            url = photo["url"]
+            is_plan = photo["is_floor_plan"]
             ext = _file_ext(url)
             prefix = f"plano_{idx + 1}" if is_plan else f"img_{idx + 1}"
             dest = raw_dir / f"{prefix}_{_url_hash(url)}{ext}"
             if dest.exists():
-                logger.debug("  [CACHE RAW] foto %d ya descargada", idx)
+                logger.debug("  [CACHE RAW] foto %d ya descargada", idx + 1)
                 raw_paths[idx] = str(dest)
             else:
                 ok = KieAiClient.download_image(url, dest)
                 raw_paths[idx] = str(dest) if ok else None
 
-        # Paso 2: enviar a KIE.AI solo las fotos cuyo procesado no está cacheado
-        regular_items = [
-            (idx, url) for idx, (url, is_plan) in enumerate(selected)
-            if not is_plan
-            and not (processed_dir / f"img_{idx + 1}_{_url_hash(url)}_enhanced.jpg").exists()
+        # Paso 2: enviar a KIE.AI solo las fotos cuyo procesado no está cacheado.
+        # Home Staging se activa SOLO cuando la IA detectó habitación vacía (empty=True).
+        regular_items: list[tuple[int, dict]] = [
+            (idx, photo) for idx, photo in enumerate(selected)
+            if not photo["is_floor_plan"]
+            and not (processed_dir / f"img_{idx + 1}_{_url_hash(photo['url'])}_enhanced.jpg").exists()
         ]
         enhanced_urls: dict[int, Optional[str]] = {}
 
         if self.client and regular_items:
-            logger.info("Enviando %d fotos a KIE.AI en paralelo...", len(regular_items))
+            staging_count = sum(1 for _, p in regular_items if p.get("empty"))
+            logger.info(
+                "Enviando %d fotos a KIE.AI (%d con Home Staging por habitación vacía)...",
+                len(regular_items), staging_count,
+            )
+            if report is not None:
+                report.photos_sent_to_kie = len(regular_items)
             with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(regular_items))) as executor:
                 futures = {
                     executor.submit(
                         self.client.enhance_photo,
-                        url,
-                        home_staging=ENABLE_HOME_STAGING,
-                        room_type=_label_to_room_type(url_to_label.get(url, "")),
+                        photo["url"],
+                        home_staging=bool(photo.get("empty")),
+                        room_type=_STAGING_ROOM_MAP.get(photo.get("room_type")),
                     ): idx
-                    for idx, url in regular_items
+                    for idx, photo in regular_items
                 }
                 for future in as_completed(futures):
                     idx = futures[future]
                     try:
                         enhanced_urls[idx] = future.result()
                     except Exception as e:
-                        logger.error("Error KIE.AI foto %d: %s", idx, e)
+                        logger.error("Error KIE.AI foto %d: %s", idx + 1, e)
                         enhanced_urls[idx] = None
 
-        # Paso 3: descargar mejoradas y armar resultados
+        # Paso 3: descargar mejoradas y armar resultados.
+        # POLITICA COPYRIGHT: si CUALQUIER foto regular falla, abortamos la propiedad entera.
+        # Cero fallback a raw (Idealista nos puede demandar por subir originales sin procesar).
         results: list[dict] = []
-        for idx, (url, is_plan) in enumerate(selected):
+        failed_photos: list[tuple[int, str, str]] = []  # (idx, url, motivo)
+
+        for idx, photo in enumerate(selected):
+            url = photo["url"]
+            is_plan = photo["is_floor_plan"]
             result: dict = {
                 "original_url": url,
                 "processed_url": None,
@@ -181,33 +195,63 @@ class PhotoEnhancer:
                 "local_path": raw_paths.get(idx),
                 "is_floor_plan": is_plan,
                 "skipped": is_plan,
+                "room_type": photo.get("room_type"),
+                "empty": photo.get("empty"),
+                "shot": photo.get("shot"),
             }
 
             if is_plan:
-                logger.debug("  [PLAN] %s", raw_paths.get(idx))
-            else:
-                url_key = _url_hash(url)
-                proc_dest = processed_dir / f"img_{idx + 1}_{url_key}_enhanced.jpg"
-                if proc_dest.exists():
-                    result["processed_url"] = url
-                    result["local_path"] = str(proc_dest)
-                    logger.debug("  [CACHE PROC] foto %d ya mejorada", idx)
-                elif idx in enhanced_urls and enhanced_urls[idx]:
-                    proc_url = enhanced_urls[idx]
-                    ok = KieAiClient.download_image(proc_url, proc_dest)
+                logger.debug("  [PLAN] foto %d (no se sube)", idx + 1)
+                results.append(result)
+                continue
+
+            url_key = _url_hash(url)
+            proc_dest = processed_dir / f"img_{idx + 1}_{url_key}_enhanced.jpg"
+
+            if proc_dest.exists():
+                result["processed_url"] = url
+                result["local_path"] = str(proc_dest)
+                logger.debug("  [CACHE PROC] foto %d ya mejorada", idx + 1)
+            elif idx in enhanced_urls and enhanced_urls[idx]:
+                proc_url = enhanced_urls[idx]
+                ok = KieAiClient.download_image(proc_url, proc_dest)
+                if ok:
                     result["processed_url"] = proc_url
-                    result["local_path"] = str(proc_dest) if ok else raw_paths.get(idx)
-                    logger.info("  [OK] foto %d mejorada", idx)
+                    result["local_path"] = str(proc_dest)
+                    logger.info("  [OK] foto %d mejorada (%s, empty=%s, %s)",
+                                idx + 1, photo.get("room_type"), photo.get("empty"), photo.get("shot"))
                 else:
-                    logger.warning("  [FALLBACK] foto %d — usando original", idx)
+                    failed_photos.append((idx, url, "descarga del enhanced falló"))
+            else:
+                motivo = "KIE devolvió None (sin créditos o error)"
+                failed_photos.append((idx, url, motivo))
 
             results.append(result)
 
         enhanced = sum(1 for r in results if not r["skipped"] and r["processed_url"])
-        fallbacks = sum(1 for r in results if not r["skipped"] and not r["processed_url"])
         plans = sum(1 for r in results if r["skipped"])
+
+        if failed_photos:
+            logger.error(
+                "Propiedad %s ABORTADA: %d/%d fotos sin procesar. NO se subirá a WP (riesgo copyright).",
+                idealista_id, len(failed_photos), len(selected) - plans,
+            )
+            for idx, url, motivo in failed_photos:
+                logger.error("    foto %d sin procesar [%s]: %s", idx + 1, motivo, url[:100])
+            if report is not None:
+                report.photos_kie_failed = len(failed_photos)
+                report.photos_kie_ok = enhanced
+                for idx, _url, motivo in failed_photos:
+                    report.skip_reason(idx + 1, motivo)
+                report.note("Propiedad abortada — riesgo copyright")
+            # Devolvemos lista vacía → el publisher no sube nada
+            return []
+
+        if report is not None:
+            report.photos_kie_ok = enhanced
+
         logger.info(
-            "Propiedad %s: %d mejoradas | %d fallback | %d planos",
-            idealista_id, enhanced, fallbacks, plans,
+            "Propiedad %s: %d mejoradas OK | %d planos | 0 fallback",
+            idealista_id, enhanced, plans,
         )
         return results

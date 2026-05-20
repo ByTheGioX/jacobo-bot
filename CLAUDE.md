@@ -94,6 +94,10 @@ python main.py --dashboard
    - **Modo continuo (cada 72h):** `python main.py`
    - **Solo scrapear sin publicar:** `python main.py --scrape-only`
    - **Ver estadísticas:** `python main.py --dashboard`
+   - **Diagnóstico WP listing (por qué algunas no aparecen en listing-v6-full-width):** `python -m tools.diagnose_wp_listing`
+   - **Diagnóstico + arreglar status meta automáticamente:** `python -m tools.diagnose_wp_listing --fix-meta`
+   - **Verificar fotos crudas en WP (dry-run):** `python -m tools.verify_uploaded`
+   - **Verificar y reprocesar automáticamente:** `python -m tools.verify_uploaded --reprocess`
 4. No cerrar la ventana negra mientras se ejecuta
 
 ### Desarrollo
@@ -137,6 +141,23 @@ Estrategia de cuentas Scrape.do:
 
 KIE.AI cobra ~$0.027 por foto mejorada. `MAX_PHOTOS_PER_PROPERTY` limita el procesamiento para reducir costos. El sistema ignora planos y videos — solo procesa fotos de la propiedad.
 
+### Política Anti-Copyright (CRÍTICA)
+
+**Nunca se sube a WordPress una foto sin procesar por KIE.AI.** Idealista puede demandar por subir originales con su marca de agua.
+
+- Si KIE falla en cualquier foto (sin créditos, error, descarga rota), el enhancer devuelve lista vacía → la propiedad NO se publica en WP en este ciclo.
+- La propiedad queda marcada en BD sin `wp_post_id` y se reintenta automáticamente en el siguiente ciclo.
+- Para auditar propiedades ya publicadas: `python -m tools.verify_uploaded` detecta crudas con pHash + visión IA, y con `--reprocess` las arregla.
+
+### Clasificador y selección de fotos
+
+Cada foto pasa por OpenRouter vision que devuelve `{type, empty, shot}`:
+- `type`: fachada / salon / cocina / dormitorio / bano / terraza / exterior / otro
+- `empty`: True si está vacía (sin muebles) → activa Home Staging automático en esa foto
+- `shot`: wide / close — se prefieren wide shots cuando hay varias del mismo tipo
+
+Después de clasificar, se eliminan duplicados con pHash (hamming distance ≤ 6) dentro de cada bucket de room_type. Esto evita publicar la misma habitación desde 3 ángulos distintos.
+
 ### Documentación KIE.AI
 
 - **API principal**: https://docs.kie.ai/market/seedream-5-lite-image-to-image
@@ -158,6 +179,7 @@ Si `ANTHROPIC_API_KEY` está configurada, las consultas de compradores usan Clau
 ## Debug
 
 - **Logs**: Toda la actividad se registra en `data/jacobo_bot.log` y stdout. Incluye scraper, llamadas API de WP, envíos de email y errores.
+- **Reporte por ciclo** (auditoría rápida): `data/processing_report.log` (humano) + `data/processing_report.jsonl` (máquina). Incluye por propiedad: fotos_scraped → selected → kie_sent → ok/fail → uploaded, con motivos de skip y notas.
 - **Debug de navegador**: Ejecuta `python main.py --scrape-only --show-browser` para ver la interacción del scraper con Idealista.
 - **Consultas de BD**: Usa CLI de SQLite: `sqlite3 data/jacobo_bot.db "SELECT * FROM properties LIMIT 5;"`
 - **Testing de email**: Verifica `SMTP_HOST`, `SMTP_PORT` y credenciales en `.env`. Los logs muestran intentos de envío.
@@ -176,5 +198,16 @@ Si `ANTHROPIC_API_KEY` está configurada, las consultas de compradores usan Clau
 | DataDome bloquea scraper | Bloqueo basado en IP. Prueba desde hotspot móvil o espera 24h. Usa `--show-browser` para resolver captcha manualmente. |
 | Autenticación WP falla | Verifica `WP_APP_PASSWORD` (NO contraseña de login regular). Genérala en Admin WP > Usuarios > Tu Perfil > Application Passwords. |
 | Fotos no mejoradas | Verifica que `KIE_AI_API_KEY` sea válida. Verifica saldo de crédito en API. Imágenes grandes pueden fallar—verifica presupuesto `MAX_PHOTOS_PER_PROPERTY`. |
-| Email no enviado a agencias | Verifica credenciales SMTP en `.env`. Verifica que dominio del remitente tenga DKIM/SPF configurado (panel Hostinger). |
+| Email no enviado a agencias | Verifica credenciales SMTP en `.env`. Verifica que dominio del remitente tenga DKIM/SPF configurado (panel CDmon). |
 | Scheduler no se ejecuta | Asegúrate que no hay instancia previa bloqueando. Verifica logs de excepciones. `python main.py --once` testea un ciclo único. |
+| Web caída tras diagnose_wp_listing | El script hace 1 llamada XML-RPC por propiedad — con 50+ propiedades satura el servidor. **SIEMPRE usar `--limit 10` la primera vez.** Si la web cae, reiniciar desde panel CDmon o esperar 5-10 min hasta que PHP libere procesos. |
+
+### ⚠️ Regla crítica: herramientas de diagnóstico en producción
+
+`tools/diagnose_wp_listing` y `tools/verify_uploaded` hacen muchas llamadas HTTP al servidor WordPress en serie. Ejecutarlas sin límite sobre una web en producción **puede tumbar el servidor**.
+
+**Protocolo obligatorio antes de correr estas herramientas:**
+1. Avisar al cliente que la web puede ponerse lenta 2-3 minutos
+2. Correr siempre con `--limit 10` primero para verificar que funciona
+3. Si hay >20 propiedades, agregar `time.sleep(0.5)` entre llamadas o correr en horario de bajo tráfico
+4. Nunca correr `--reprocess` sin haber hecho primero un dry-run y revisado el CSV

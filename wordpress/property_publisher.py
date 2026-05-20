@@ -46,13 +46,18 @@ class PropertyPublisher:
         prop: Property,
         processed_photos: list[dict],
         existing_wp_id: Optional[int] = None,
+        report=None,
     ) -> Optional[int]:
         """Crea o actualiza un post de propiedad en WordPress/Houzez."""
         media_ids = self._upload_photos(prop.idealista_id, processed_photos)
+        if report is not None:
+            report.photos_uploaded_wp = len(media_ids)
         featured_id = media_ids[0] if media_ids else None
 
         # Taxonomías Houzez (REST base usa guiones bajos, no guiones)
-        status_label = "En alquiler" if prop.operation_type == "rent" else "En venta"
+        is_rent = prop.operation_type == "rent"
+        status_label = "En alquiler" if is_rent else "En venta"
+        status_slug = "for-rent" if is_rent else "for-sale"
         status_id = self.wp.get_or_create_term("property_status", status_label)
 
         type_label = _TYPE_MAP.get(prop.property_type.lower(), prop.property_type.capitalize() or "Propiedad")
@@ -72,14 +77,21 @@ class PropertyPublisher:
         content = self._rewrite_description(_clean_text(prop.description), prop)
         excerpt = self._build_excerpt(prop)
 
-        # Meta campos Houzez — se guardan vía XML-RPC (REST API no los persiste)
+        # Meta campos Houzez — se guardan vía XML-RPC (REST API no los persiste).
+        # IMPORTANTE: el shortcode de Houzez (listing-v6-full-width) filtra por slug,
+        # NO por label. fave_property_status DEBE ser el slug ("for-sale" / "for-rent").
         meta: dict = {
             "fave_property_price":        str(prop.price or 0),
             "fave_property_price_postfix": "EUR",
             "fave_property_id":           f"idealista-{prop.idealista_id}",
+            "fave_property_status":       status_slug,
+            "fave_property_type":         type_label,
             "fave_property_map_address":  prop.location or "",
             "fave_property_map_zoom":     "14",
             "fave_property_content":      excerpt,
+            # Habilitar visibilidad en listings de Houzez por defecto
+            "fave_featured":              "0",
+            "fave_property_country":      "ES",
         }
         if prop.area_m2:
             meta["fave_property_size"]        = str(int(prop.area_m2))
