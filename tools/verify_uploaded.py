@@ -195,7 +195,7 @@ def main():
     parser = argparse.ArgumentParser(description="Verificación retroactiva de fotos en WP")
     parser.add_argument("--reprocess", action="store_true",
                         help="Reprocesar y reemplazar fotos crudas detectadas (necesita tokens KIE)")
-    parser.add_argument("--limit", type=int, default=20, help="Limitar a primeras N propiedades (default: 20, 0 = sin límite)")
+    parser.add_argument("--limit", type=int, default=0, help="Limitar a primeras N propiedades (default: todas, usa un número para limitar)")
     parser.add_argument("--csv", default="data/verification_report.csv", help="Ruta del CSV de salida")
     parser.add_argument("--skip-ai", action="store_true",
                         help="Omitir paso 2 (vision IA) — solo pHash local")
@@ -275,7 +275,7 @@ def main():
         rows.append(row)
         if i % 5 == 0:
             logger.info("  %d/%d propiedades verificadas...", i, len(props))
-        time.sleep(1.5)
+        time.sleep(8)  # delay generoso para no saturar el servidor (plan CDmon compartido)
 
     # CSV
     if rows:

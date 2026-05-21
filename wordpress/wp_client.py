@@ -13,6 +13,23 @@ from typing import Optional, Any
 import requests
 from requests.auth import HTTPBasicAuth
 
+
+class _RequestsTransport(xmlrpc.client.Transport):
+    """XML-RPC transport que usa requests para seguir redirects (302)."""
+    def __init__(self):
+        super().__init__()
+        self.verbose = False
+
+    def request(self, host, handler, request_body, verbose=False):
+        import io
+        # Forzar HTTPS independientemente del WP_URL configurado
+        url = f"https://{host}{handler}"
+        resp = requests.post(url, data=request_body,
+                             headers={"Content-Type": "text/xml"},
+                             timeout=30, allow_redirects=True)
+        resp.raise_for_status()
+        return self.parse_response(io.BytesIO(resp.content))
+
 from config.settings import WP_URL, WP_USER, WP_APP_PASSWORD
 
 logger = logging.getLogger(__name__)
@@ -20,7 +37,8 @@ logger = logging.getLogger(__name__)
 
 class WPClient:
     def __init__(self):
-        self.base = f"{WP_URL}/wp-json/wp/v2"
+        _url = WP_URL.replace("http://", "https://")
+        self.base = f"{_url}/wp-json/wp/v2"
         self.auth = HTTPBasicAuth(WP_USER, WP_APP_PASSWORD)
         self.session = requests.Session()
         self._waf_bypassed = False
@@ -30,7 +48,7 @@ class WPClient:
     def _bypass_waf_if_needed(self):
         """Si el WAF bloquea con 403 HTML, usa Playwright para ejecutar el challenge JS y obtener la cookie."""
         try:
-            r = self.session.get(f"{WP_URL}/wp-json/", timeout=10)
+            r = self.session.get(f"{self.base.split('/wp-json')[0]}/wp-json/", timeout=10)
             if r.status_code == 200 and "json" in r.headers.get("Content-Type", ""):
                 return  # Sin WAF, no hace falta nada
             if r.status_code != 403 and "refresh" not in r.text[:500]:
@@ -179,9 +197,10 @@ class WPClient:
     # Taxonomy (categorías, tags)
     # ------------------------------------------------------------------
 
-    def set_post_meta(self, post_id: int, meta: dict) -> None:
+    def set_post_meta(self, post_id: int, meta: dict) -> bool:
         """Set post custom fields via XML-RPC (REST API cannot save Houzez fave_property_* meta)."""
-        proxy = xmlrpc.client.ServerProxy(f"{WP_URL}/xmlrpc.php")
+        proxy = xmlrpc.client.ServerProxy(f"{WP_URL}/xmlrpc.php", allow_none=True,
+                                          transport=_RequestsTransport())
         # Get existing custom fields to update by ID (avoids duplicates on re-publish)
         existing: dict[str, list[str]] = {}
         try:
@@ -202,12 +221,14 @@ class WPClient:
                 custom_fields.append(entry)
 
         if not custom_fields:
-            return
+            return True
         try:
             proxy.wp.editPost(1, WP_USER, WP_APP_PASSWORD, post_id, {"custom_fields": custom_fields})
             logger.debug("Meta XML-RPC set para post %s: %d campos", post_id, len(custom_fields))
+            return True
         except Exception as e:
             logger.error("XML-RPC set_post_meta falló para post %s: %s", post_id, e)
+            return False
 
     def get_or_create_term(self, taxonomy: str, name: str) -> Optional[int]:
         try:

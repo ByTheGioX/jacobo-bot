@@ -44,8 +44,8 @@ def _fetch_all_properties(wp: WPClient) -> list[dict]:
             page_data = wp._get(WP_PROPERTY_REST_BASE, {
                 "per_page": 100,
                 "page": page,
-                "status": "publish,pending,draft",
-                "_fields": "id,title,status,link,meta",
+                "status": "publish",
+                "_fields": "id,title,status,link",
             })
         except Exception as e:
             logger.warning("Página %d falló: %s — terminando", page, e)
@@ -63,7 +63,8 @@ def _fetch_meta_via_xmlrpc(wp: WPClient, post_id: int) -> dict[str, str]:
     """Obtiene custom_fields de un post vía XML-RPC."""
     import xmlrpc.client
     from config.settings import WP_URL, WP_USER, WP_APP_PASSWORD
-    proxy = xmlrpc.client.ServerProxy(f"{WP_URL}/xmlrpc.php")
+    from wordpress.wp_client import _RequestsTransport
+    proxy = xmlrpc.client.ServerProxy(f"{WP_URL}/xmlrpc.php", transport=_RequestsTransport())
     try:
         post = proxy.wp.getPost(1, WP_USER, WP_APP_PASSWORD, post_id, ["custom_fields"])
         meta: dict[str, str] = {}
@@ -102,21 +103,20 @@ def _fix_status_meta(wp: WPClient, prop_id: int, current_meta: dict[str, str]) -
         return False  # ya está bien
     # Inferir slug: si el label dice 'alquiler' → for-rent, si no → for-sale
     new_slug = "for-rent" if "alqu" in current.lower() else "for-sale"
-    try:
-        wp.set_post_meta(prop_id, {"fave_property_status": new_slug})
+    ok = wp.set_post_meta(prop_id, {"fave_property_status": new_slug})
+    if ok:
         logger.info("Fix aplicado a post %d: fave_property_status='%s' → '%s'", prop_id, current, new_slug)
-        return True
-    except Exception as e:
-        logger.error("Fix falló para post %d: %s", prop_id, e)
-        return False
+    else:
+        logger.error("Fix FALLÓ para post %d — verificar WP_URL y credenciales", prop_id)
+    return ok
 
 
 def main():
     parser = argparse.ArgumentParser(description="Diagnóstico de listings de Houzez")
     parser.add_argument("--fix-meta", action="store_true",
                         help="Si se especifica, intenta arreglar fave_property_status faltante.")
-    parser.add_argument("--limit", type=int, default=20,
-                        help="Máximo de propiedades a analizar (default: 20, 0 = sin límite)")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="Máximo de propiedades a analizar (default: todas, usa un número para limitar)")
     parser.add_argument("--csv", default="data/wp_diagnostic.csv", help="Ruta del CSV de salida")
     args = parser.parse_args()
 
@@ -143,7 +143,7 @@ def main():
             if _fix_status_meta(wp, prop["id"], meta):
                 fixed += 1
 
-        time.sleep(1.5)  # evitar saturar el servidor con llamadas XML-RPC en serie
+        time.sleep(8)  # delay generoso para no saturar el servidor (plan CDmon compartido)
 
     # Escribir CSV
     fieldnames = list(rows[0].keys()) if rows else []
