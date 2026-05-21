@@ -55,9 +55,12 @@ class PropertyPublisher:
         featured_id = media_ids[0] if media_ids else None
 
         # Taxonomías Houzez (REST base usa guiones bajos, no guiones)
+        # IMPORTANTE: el slug usado en fave_property_status DEBE coincidir con el slug
+        # del término de la taxonomía property_status. Houzez/WPML lo crea en el idioma
+        # del sitio (en este caso español): "en-venta" / "en-alquiler".
         is_rent = prop.operation_type == "rent"
         status_label = "En alquiler" if is_rent else "En venta"
-        status_slug = "for-rent" if is_rent else "for-sale"
+        status_slug = "en-alquiler" if is_rent else "en-venta"
         status_id = self.wp.get_or_create_term("property_status", status_label)
 
         type_label = _TYPE_MAP.get(prop.property_type.lower(), prop.property_type.capitalize() or "Propiedad")
