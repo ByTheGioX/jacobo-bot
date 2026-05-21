@@ -62,7 +62,10 @@ class PropertyMonitor:
                 self._handle_removed(rid)
                 stats.removed += 1
 
-            # 4. Procesar propiedades nuevas y actualizadas
+            # 4. Reintentar propiedades en BD sin wp_post_id (fotos ya procesadas)
+            self._retry_unpublished(stats)
+
+            # 5. Procesar propiedades nuevas y actualizadas
             for prop in scraped_props:
                 try:
                     is_new, was_updated = self.db.upsert_property(self._prop_to_dict(prop))
@@ -174,6 +177,71 @@ class PropertyMonitor:
         else:
             rep.wp_action = "aborted"
             rep.note("WP publish devolvió None")
+
+    def _retry_unpublished(self, stats: RunStats):
+        """Re-publica propiedades activas sin wp_post_id usando fotos ya procesadas."""
+        import json
+        pending = [
+            p for p in self.db.get_active_properties()
+            if not p.get("wp_post_id") and p.get("processed_photos")
+        ]
+        if not pending:
+            return
+        logger.info("[REINTENTO] %d propiedades sin wp_post_id con fotos procesadas — re-publicando...", len(pending))
+        for db_prop in pending:
+            try:
+                processed_photos = json.loads(db_prop["processed_photos"]) if isinstance(db_prop["processed_photos"], str) else db_prop["processed_photos"]
+                if not processed_photos:
+                    continue
+                prop = self._db_prop_to_property(db_prop)
+                rep = self.reporter.new_property(db_prop["idealista_id"], db_prop.get("title", ""), db_prop.get("url", ""))
+                rep.note("Reintento: fotos ya procesadas, solo re-publicando en WP")
+                if SKIP_WORDPRESS:
+                    rep.wp_action = "skipped"
+                    continue
+                new_wp_id = self.publisher.publish(prop, processed_photos, report=rep)
+                if new_wp_id:
+                    self.db.set_wp_post_id(db_prop["idealista_id"], new_wp_id)
+                    rep.wp_post_id = new_wp_id
+                    rep.wp_action = "created"
+                    stats.new += 1
+                    logger.info("[REINTENTO OK] %s → wp_post_id=%d", db_prop["idealista_id"], new_wp_id)
+                else:
+                    rep.wp_action = "aborted"
+                    logger.warning("[REINTENTO FALLO] %s — WP publish devolvió None", db_prop["idealista_id"])
+            except Exception as e:
+                logger.error("[REINTENTO ERROR] %s: %s", db_prop.get("idealista_id"), e)
+                stats.errors += 1
+
+    @staticmethod
+    def _db_prop_to_property(db_prop: dict) -> "Property":
+        """Reconstruye un objeto Property desde datos de la BD."""
+        import json
+        from scraper.idealista_scraper import Property
+        photo_urls = db_prop.get("photo_urls", [])
+        if isinstance(photo_urls, str):
+            photo_urls = json.loads(photo_urls)
+        return Property(
+            idealista_id=db_prop["idealista_id"],
+            url=db_prop.get("url", ""),
+            title=db_prop.get("title", ""),
+            price=db_prop.get("price"),
+            price_text="",
+            location=db_prop.get("location", ""),
+            area_m2=db_prop.get("area_m2"),
+            rooms=db_prop.get("rooms"),
+            bathrooms=db_prop.get("bathrooms"),
+            floor=db_prop.get("floor"),
+            description=db_prop.get("description", ""),
+            property_type=db_prop.get("property_type", ""),
+            operation_type=db_prop.get("operation_type", "sale"),
+            has_parking=bool(db_prop.get("has_parking")),
+            has_pool=bool(db_prop.get("has_pool")),
+            has_terrace=bool(db_prop.get("has_terrace")),
+            photo_urls=photo_urls,
+            photo_labels=[],
+            is_floor_plan=[],
+        )
 
     def _handle_removed(self, idealista_id: str):
         db_prop = self.db.get_property(idealista_id)
