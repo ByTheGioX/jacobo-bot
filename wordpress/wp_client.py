@@ -124,6 +124,57 @@ class WPClient:
         return resp.json()
 
     # ------------------------------------------------------------------
+    # Cache purge (best-effort, prueba varios plugins comunes)
+    # ------------------------------------------------------------------
+
+    def purge_all_cache(self) -> list[str]:
+        """Intenta purgar el cache via plugins/proveedores comunes.
+
+        Best-effort: no falla si nada existe. Devuelve la lista de proveedores
+        que respondieron OK (útil para log).
+
+        Se invoca después de publicar/actualizar/eliminar propiedades para
+        que las listas (incluyendo /listing-v6-full-width/) reflejen cambios
+        sin esperar al TTL de cache del servidor (CDmon usa 48h).
+        """
+        site = self.base.split("/wp-json")[0]
+        attempts = [
+            # LiteSpeed Cache (común en hostings LiteSpeed como CDmon)
+            ("LiteSpeed (PURGEALL)", "GET",  f"{site}/?LSCWP_CTRL=PURGEALL"),
+            ("LiteSpeed REST",       "POST", f"{site}/wp-json/litespeed/v1/purge/all"),
+            # WP Rocket
+            ("WP Rocket",            "GET",  f"{site}/wp-admin/admin-ajax.php?action=rocket_clean_domain"),
+            # W3 Total Cache
+            ("W3 Total Cache",       "POST", f"{site}/wp-admin/admin-ajax.php?action=w3tc_flush_all"),
+            # WP Super Cache
+            ("WP Super Cache",       "GET",  f"{site}/wp-admin/admin-ajax.php?action=wpsc_purge_cache_now"),
+            # WP Fastest Cache
+            ("WP Fastest Cache",     "GET",  f"{site}/wp-admin/admin-ajax.php?action=wpfc_clear_cache_co"),
+            # Cache Enabler
+            ("Cache Enabler",        "POST", f"{site}/wp-json/cache-enabler/v1/clear"),
+        ]
+        purged: list[str] = []
+        for name, method, url in attempts:
+            try:
+                if method == "GET":
+                    r = self.session.get(url, auth=self.auth, timeout=15, allow_redirects=False)
+                else:
+                    r = self.session.post(url, auth=self.auth, timeout=15, allow_redirects=False)
+                # 200/204 = OK; 302 a admin login (no autenticado vía cookie) = no aplicable
+                if r.status_code in (200, 204):
+                    body = (r.text or "")[:200].lower()
+                    # Algunos plugins responden 200 con HTML de error/login — filtrar
+                    if "login" not in body and "wp-login" not in body and "<!doctype" not in body[:50]:
+                        purged.append(name)
+                        logger.info("Cache purgado vía %s (HTTP %d)", name, r.status_code)
+            except Exception as e:
+                logger.debug("Purge %s falló: %s", name, e)
+
+        if not purged:
+            logger.info("Purge de cache: ningún plugin respondió — probablemente cache de servidor (CDmon). Limpiar manual desde panel.")
+        return purged
+
+    # ------------------------------------------------------------------
     # Posts
     # ------------------------------------------------------------------
 

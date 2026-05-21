@@ -111,6 +111,14 @@ class PropertyMonitor:
                 "removed": stats.removed,
             })
 
+            # Purga el cache si hubo cambios en WP — necesario para que el listing
+            # (que CDmon cachea 48h) refleje las nuevas/actualizadas/eliminadas sin demora.
+            if stats.new or stats.updated or stats.removed:
+                try:
+                    self.publisher.wp.purge_all_cache()
+                except Exception as e:
+                    logger.warning("Purge de cache falló (no crítico): %s", e)
+
         except Exception as e:
             logger.error(f"Error crítico en ciclo de monitoreo: {e}")
             self.db.finish_scrape_run(run_id, {}, error=str(e))

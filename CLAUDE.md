@@ -98,6 +98,7 @@ python main.py --dashboard
    - **Diagnóstico + arreglar status meta automáticamente:** `python -m tools.diagnose_wp_listing --fix-meta`
    - **Verificar fotos crudas en WP (dry-run):** `python -m tools.verify_uploaded`
    - **Verificar y reprocesar automáticamente:** `python -m tools.verify_uploaded --reprocess`
+   - **Purgar cache de WP (si la web no muestra cambios):** `python -m tools.purge_cache`
 4. No cerrar la ventana negra mientras se ejecuta
 
 ### Desarrollo
