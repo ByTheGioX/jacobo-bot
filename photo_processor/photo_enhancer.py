@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
-from photo_processor.kie_ai_client import KieAiClient
+from photo_processor.kie_ai_client import KieAiClient, KieAiNoCreditsError
 from photo_processor.photo_classifier import select_best_photos
 from config.settings import MAX_PHOTOS_PER_PROPERTY
 
@@ -175,6 +175,8 @@ class PhotoEnhancer:
                     idx = futures[future]
                     try:
                         enhanced_urls[idx] = future.result()
+                    except KieAiNoCreditsError:
+                        raise
                     except Exception as e:
                         logger.error("Error KIE.AI foto %d: %s", idx + 1, e)
                         enhanced_urls[idx] = None

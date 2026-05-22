@@ -20,6 +20,11 @@ Este archivo proporciona orientación a Claude Code (claude.ai/code) al trabajar
 
 **08 — Las instrucciones del usuario siempre tienen prioridad.** Si el usuario pide algo distinto a las reglas, sus instrucciones ganan. El archivo nunca limita al usuario.
 
+**09 — Siempre hacer commit y dar el comando de pull para el VPS al terminar.** Después de cualquier cambio en el código, hacer `git add . && git commit && git push` automáticamente. Luego incluir al final de la respuesta el comando exacto para que el usuario lo ejecute en el VPS:
+```
+cd C:\Users\LIVETEAM\Desktop\jacobo-bot && git pull
+```
+
 ## Descripción General del Proyecto
 
 **Jacobo-Bot** es un sistema automatizado de marketplace inmobiliario que monitorea Idealista (plataforma española de propiedades), procesa datos de propiedades y publica listados en WordPress. También maneja búsquedas de compradores y las conecta con agencias colaboradoras.

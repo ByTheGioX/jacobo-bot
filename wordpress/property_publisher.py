@@ -10,6 +10,7 @@ from typing import Optional
 
 from scraper.idealista_scraper import Property
 from wordpress.wp_client import WPClient
+from photo_processor.photo_classifier import OpenRouterNoCreditsError
 from config.settings import WP_PROPERTY_REST_BASE, COMPETITOR_BRANDS, OPENROUTER_API_KEY, OPENROUTER_MODEL
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ class PropertyPublisher:
         meta: dict = {
             "fave_property_price":        str(prop.price or 0),
             "fave_property_price_postfix": "EUR",
-            "fave_property_id":           f"idealista-{prop.idealista_id}",
+            "fave_property_id":           self._build_property_id(prop),
             "fave_property_status":       status_slug,
             "fave_property_type":         type_label,
             "fave_property_map_address":  prop.location or "",
@@ -183,6 +184,13 @@ class PropertyPublisher:
             if rewritten:
                 logger.info("Descripcion reescrita con IA (%d -> %d chars)", len(raw), len(rewritten))
                 return rewritten
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status == 402:
+                raise OpenRouterNoCreditsError(
+                    "OpenRouter sin créditos (402) en reescritura de descripción"
+                ) from e
+            logger.warning("Error reescribiendo descripción con IA: %s — usando original", e)
         except Exception as e:
             logger.warning("Error reescribiendo descripción con IA: %s — usando original", e)
         return raw
@@ -203,6 +211,17 @@ class PropertyPublisher:
         if prop.location:
             parts.append(prop.location)
         return " · ".join(parts) if parts else ""
+
+    @staticmethod
+    def _build_property_id(prop) -> str:
+        """Genera el ID interno de la propiedad usando el código de agencia extraído del URL.
+        Ejemplo: https://...idealista.com/pro/inmobiliariavasanco/inmueble/111460478/
+                 → 'inmobiliariavasanco-111460478'
+        Si el URL no contiene /pro/<agencia>/, usa 'idealista' como fallback.
+        """
+        m = re.search(r'/pro/([^/]+)/', prop.url or "")
+        agency = m.group(1) if m else "idealista"
+        return f"{agency}-{prop.idealista_id}"
 
     def unpublish(self, wp_post_id: int):
         try:

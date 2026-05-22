@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from scraper.idealista_scraper import IdealistaScraper, Property
 from photo_processor.photo_enhancer import PhotoEnhancer
+from photo_processor.kie_ai_client import KieAiNoCreditsError
+from photo_processor.photo_classifier import OpenRouterNoCreditsError
 from wordpress.property_publisher import PropertyPublisher
 from database.db import Database
 from monitor.processing_report import CycleReporter, PropertyReport
@@ -95,6 +97,16 @@ class PropertyMonitor:
                         else:
                             logger.debug(f"[SIN CAMBIOS] {prop.idealista_id}")
 
+                except (KieAiNoCreditsError, OpenRouterNoCreditsError) as e:
+                    logger.critical(
+                        "=== CICLO DETENIDO: API SIN CRÉDITOS ===\n"
+                        "  Error: %s\n"
+                        "  Ninguna propiedad adicional será procesada en este ciclo.\n"
+                        "  Recarga saldo y vuelve a ejecutar.",
+                        e,
+                    )
+                    stats.errors += 1
+                    raise
                 except Exception as e:
                     logger.error(f"Error procesando propiedad {prop.idealista_id}: {e}")
                     stats.errors += 1
@@ -211,6 +223,8 @@ class PropertyMonitor:
                     logger.info("[REINTENTO OK] %s → wp_post_id=%s", prop.idealista_id, rep.wp_post_id)
                 elif rep.wp_action == "aborted":
                     logger.warning("[REINTENTO ABORTADO] %s — ver reporte", prop.idealista_id)
+            except (KieAiNoCreditsError, OpenRouterNoCreditsError):
+                raise
             except Exception as e:
                 logger.error("[REINTENTO ERROR] %s: %s", db_prop.get("idealista_id"), e)
                 stats.errors += 1

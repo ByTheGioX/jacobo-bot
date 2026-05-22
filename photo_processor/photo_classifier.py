@@ -24,6 +24,12 @@ from config.settings import OPENROUTER_API_KEY, OPENROUTER_MODEL
 
 logger = logging.getLogger(__name__)
 
+
+class OpenRouterNoCreditsError(Exception):
+    """Se levanta cuando OpenRouter no tiene saldo (HTTP 402). Aborta el ciclo completo."""
+    pass
+
+
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 _ROOM_TYPES = ["fachada", "salon", "cocina", "dormitorio", "bano", "terraza", "exterior", "otro"]
@@ -125,6 +131,16 @@ def _classify_one(image_url: str) -> dict:
             "empty": bool(parsed.get("empty", False)),
             "shot": (parsed.get("shot") or "wide").lower(),
         }
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 0
+        if status == 402:
+            raise OpenRouterNoCreditsError(
+                "OpenRouter sin créditos (402) — recarga saldo en https://openrouter.ai"
+            ) from e
+        logger.warning("Error clasificando foto %s: HTTP %s", image_url[:80], status)
+        return {"type": "otro", "empty": False, "shot": "wide"}
+    except OpenRouterNoCreditsError:
+        raise
     except Exception as e:
         logger.warning("Error clasificando foto %s: %s", image_url[:80], e)
         return {"type": "otro", "empty": False, "shot": "wide"}
@@ -224,7 +240,14 @@ def select_best_photos(
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(_classify_one, url): url for url in to_classify}
             for future in as_completed(futures):
-                classifications[futures[future]] = future.result()
+                url = futures[future]
+                try:
+                    classifications[url] = future.result()
+                except OpenRouterNoCreditsError:
+                    raise
+                except Exception as e:
+                    logger.warning("Error clasificando %s: %s", url[:60], e)
+                    classifications[url] = {"type": "otro", "empty": False, "shot": "wide"}
 
     # Calcular pHash en paralelo para deduplicación
     logger.info("Calculando pHash de %d fotos para deduplicación...", len(regular))

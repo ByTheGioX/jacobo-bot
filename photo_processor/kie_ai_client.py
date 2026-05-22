@@ -58,6 +58,11 @@ class KieAiError(Exception):
     pass
 
 
+class KieAiNoCreditsError(KieAiError):
+    """Se levanta cuando la cuenta KIE.AI no tiene saldo (HTTP 402). Aborta el ciclo completo."""
+    pass
+
+
 class KieAiClient:
     def __init__(self):
         if not KIE_AI_API_KEY:
@@ -122,11 +127,16 @@ class KieAiClient:
                 logger.error("Kie.ai create error %s: %s", code, data.get("msg"))
                 return None
             except requests.HTTPError as e:
-                if e.response.status_code in _RETRYABLE and attempt < 2:
-                    logger.warning("Kie.ai HTTP %s — reintentando en 5s...", e.response.status_code)
+                status = e.response.status_code if e.response is not None else 0
+                if status == 402:
+                    raise KieAiNoCreditsError(
+                        "KIE.AI sin créditos (402) — recarga saldo en https://kie.ai"
+                    ) from e
+                if status in _RETRYABLE and attempt < 2:
+                    logger.warning("Kie.ai HTTP %s — reintentando en 5s...", status)
                     time.sleep(5)
                     continue
-                logger.error("Kie.ai HTTP %s: %s", e.response.status_code, e.response.text[:300])
+                logger.error("Kie.ai HTTP %s: %s", status, e.response.text[:300] if e.response else "")
                 return None
             except Exception as e:
                 logger.error("Kie.ai error inesperado: %s", e)

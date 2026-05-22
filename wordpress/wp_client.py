@@ -212,29 +212,49 @@ class WPClient:
         mime, _ = mimetypes.guess_type(str(path))
         mime = mime or "image/jpeg"
 
-        try:
-            with open(path, "rb") as f:
-                resp = self.session.post(
-                    f"{self.base}/media",
-                    auth=self.auth,
-                    headers={
-                        "Content-Disposition": f'attachment; filename="{path.name}"',
-                        "Content-Type": mime,
-                    },
-                    data=f,
-                    timeout=60,
-                )
+        _RETRYABLE_STATUS = {500, 502, 503, 504}
+        for attempt in range(1, 4):
+            try:
+                with open(path, "rb") as f:
+                    resp = self.session.post(
+                        f"{self.base}/media",
+                        auth=self.auth,
+                        headers={
+                            "Content-Disposition": f'attachment; filename="{path.name}"',
+                            "Content-Type": mime,
+                        },
+                        data=f,
+                        timeout=60,
+                    )
                 resp.raise_for_status()
                 media = resp.json()
+                if isinstance(media, list):
+                    msg = f"WP media devolvió lista (error del servidor): {str(media)[:200]}"
+                    if attempt < 3:
+                        logger.warning("upload_media intento %d: %s — reintentando en 10s...", attempt, msg)
+                        time.sleep(10)
+                        continue
+                    raise ValueError(msg)
                 update = {"title": title, "alt_text": title} if title else {}
                 if post_id:
                     update["post"] = post_id
                 if update:
                     self._put(f"media/{media['id']}", update)
                 return media
-        except Exception as e:
-            logger.error(f"Error subiendo media {file_path}: {e}")
-            return None
+            except requests.HTTPError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status in _RETRYABLE_STATUS and attempt < 3:
+                    logger.warning("upload_media HTTP %s intento %d — reintentando en 10s...", status, attempt)
+                    time.sleep(10)
+                    continue
+                logger.error("Error subiendo media %s: HTTP %s", file_path, status)
+                return None
+            except ValueError:
+                raise
+            except Exception as e:
+                logger.error("Error subiendo media %s: %s", file_path, e)
+                return None
+        return None
 
     def attach_media_to_post(self, media_ids: list[int], post_id: int) -> None:
         """Adjunta imágenes al post para que Houzez las muestre en la galería."""
