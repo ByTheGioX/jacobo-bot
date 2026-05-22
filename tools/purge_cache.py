@@ -10,7 +10,7 @@ Uso:
 
 Si ningún plugin responde, el cache es probablemente del servidor (CDmon).
 En ese caso, hay que limpiarlo manualmente desde:
-    Panel CDmon → Hostings → Gestionar → Servidor → Gestionar Caché
+    Panel CDmon -> Hostings -> Gestionar -> Servidor -> Gestionar Cache
 """
 
 import logging
@@ -35,12 +35,12 @@ def main():
         for name in purged:
             print(f"  - {name}")
         print()
-        print("Recargá https://www.inmo4you.com/listing-v6-full-width/ y verificá que aparecen las propiedades.")
+        print("Recarga https://www.inmo4you.com/listing-v6-full-width/ y verifica que aparecen las propiedades.")
     else:
         print("Ningún plugin de cache de WP respondió.")
         print()
         print("Probablemente el cache es del servidor CDmon. Limpiá manualmente:")
-        print("  Panel CDmon → Hostings → Gestionar → Servidor → Gestionar Caché → Limpiar")
+        print("  Panel CDmon -> Hostings -> Gestionar -> Servidor -> Gestionar Cache -> Limpiar")
 
 
 if __name__ == "__main__":
