@@ -16,7 +16,7 @@ from typing import Optional
 
 from photo_processor.kie_ai_client import KieAiClient, KieAiNoCreditsError
 from photo_processor.photo_classifier import select_best_photos
-from config.settings import MAX_PHOTOS_PER_PROPERTY
+from config.settings import MAX_PHOTOS_PER_PROPERTY, ENABLE_HOME_STAGING
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ class PhotoEnhancer:
                     executor.submit(
                         self.client.enhance_photo,
                         photo["url"],
-                        home_staging=bool(photo.get("empty")),
+                        home_staging=bool(photo.get("empty")) and ENABLE_HOME_STAGING,
                         room_type=_STAGING_ROOM_MAP.get(photo.get("room_type")),
                     ): idx
                     for idx, photo in regular_items
