@@ -300,9 +300,12 @@ class IdealistaScraper:
             {"render": "true", "geoCode": "ES"},
             {"render": "true"},
         ]
+        dead_tokens: set[int] = set()  # índices de tokens definitivamente inválidos
         for params in variants:
             qs = "&".join(f"{k}={v}" for k, v in params.items())
             for token_idx, token in enumerate(tokens):
+                if token_idx in dead_tokens:
+                    continue
                 for attempt in range(retries):
                     try:
                         api_url = f"https://api.scrape.do/?token={token}&url={quote(url, safe='')}&{qs}{extra}"
@@ -311,8 +314,18 @@ class IdealistaScraper:
                             logger.warning("Scrape.do: 404 en %s — perfil inexistente, saltando", url)
                             return None
                         if resp.status_code == 401:
-                            logger.warning("Scrape.do token %d (401) — body: %s", token_idx + 1, resp.text[:300])
-                            break  # probar siguiente token
+                            body = resp.text[:400]
+                            if "inactive or incorrect" in body:
+                                logger.error("Scrape.do token %d inválido/inactivo — marcando como muerto. Verifica el dashboard.", token_idx + 1)
+                                dead_tokens.add(token_idx)
+                                break
+                            if "throttled" in body:
+                                logger.warning("Scrape.do throttle — esperando 35s antes de continuar")
+                                time.sleep(35)
+                                break
+                            # límite mensual agotado
+                            logger.warning("Scrape.do token %d agotado (límite mensual) — rotando", token_idx + 1)
+                            break
                         if resp.status_code == 200 and len(resp.text) > 5000 and not _is_captcha(resp.text):
                             logger.info("Scrape.do OK [token%d/%s]: %s (%d chars)", token_idx + 1, qs, url, len(resp.text))
                             return resp.text
