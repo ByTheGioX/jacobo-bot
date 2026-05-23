@@ -311,7 +311,7 @@ class IdealistaScraper:
                             logger.warning("Scrape.do: 404 en %s — perfil inexistente, saltando", url)
                             return None
                         if resp.status_code == 401:
-                            logger.warning("Scrape.do token %d agotado — rotando al siguiente", token_idx + 1)
+                            logger.warning("Scrape.do token %d (401) — body: %s", token_idx + 1, resp.text[:300])
                             break  # probar siguiente token
                         if resp.status_code == 200 and len(resp.text) > 5000 and not _is_captcha(resp.text):
                             logger.info("Scrape.do OK [token%d/%s]: %s (%d chars)", token_idx + 1, qs, url, len(resp.text))
