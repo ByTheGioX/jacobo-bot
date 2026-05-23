@@ -27,7 +27,7 @@ from urllib.parse import urljoin, quote
 import requests
 from bs4 import BeautifulSoup
 
-from config.settings import IDEALISTA_PROFILE_URLS, MAX_PROPERTIES_PER_AGENCY, SCRAPE_DO_TOKEN, SCRAPE_DO_TOKENS, PROXY_SERVER, PROXY_USER, PROXY_PASSWORD
+from config.settings import IDEALISTA_PROFILE_URLS, MAX_PROPERTIES_PER_AGENCY, SCRAPE_DO_TOKEN, SCRAPE_DO_TOKENS, SCRAPFLY_API_KEY, PROXY_SERVER, PROXY_USER, PROXY_PASSWORD
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +291,51 @@ class IdealistaScraper:
     # Carga de pagina
     # ------------------------------------------------------------------
 
+    def _get_html_via_scrapfly(self, url: str, retries: int = 2) -> Optional[str]:
+        """Scrapfly con ASP (pasa DataDome). Cuesta ~25 créditos por request."""
+        is_detail = "/inmueble/" in url
+        # JS solo necesario para listings dinámicos; detalles sirven con HTML estático
+        params = {
+            "key": SCRAPFLY_API_KEY,
+            "url": url,
+            "asp": "true",
+            "country": "es",
+        }
+        if is_detail:
+            params["render_js"] = "false"
+        qs = "&".join(f"{k}={quote(str(v), safe='')}" for k, v in params.items())
+        api_url = f"https://api.scrapfly.io/scrape?{qs}"
+        for attempt in range(retries):
+            try:
+                resp = requests.get(api_url, timeout=120)
+                if resp.status_code == 422:
+                    logger.error("Scrapfly: configuración inválida — body: %s", resp.text[:300])
+                    return None
+                if resp.status_code == 429:
+                    logger.warning("Scrapfly rate limit — esperando 30s")
+                    time.sleep(30)
+                    continue
+                if resp.status_code == 200:
+                    data = resp.json()
+                    result = data.get("result", {})
+                    if result.get("success") and result.get("status_code") == 200:
+                        html = result.get("content", "")
+                        cost = data.get("context", {}).get("cost", {}).get("total", "?")
+                        if html and len(html) > 5000 and not _is_captcha(html):
+                            logger.info("Scrapfly OK [%s créditos]: %s (%d chars)", cost, url, len(html))
+                            return html
+                        logger.warning("Scrapfly: HTML inválido/captcha — len=%d", len(html))
+                    else:
+                        logger.warning("Scrapfly: result.success=False — status=%s", result.get("status_code"))
+                else:
+                    logger.warning("Scrapfly intento %d: HTTP %d body=%s", attempt + 1, resp.status_code, resp.text[:200])
+            except Exception as e:
+                logger.error("Scrapfly intento %d: %s", attempt + 1, e)
+            if attempt < retries - 1:
+                time.sleep(5 * (attempt + 1))
+        logger.error("Scrapfly: agotados todos los intentos para %s", url)
+        return None
+
     def _get_html_via_scrapedo(self, url: str, retries: int = 2) -> Optional[str]:
         is_detail = "/inmueble/" in url
         extra = "&timeout=15000" if is_detail else ""
@@ -338,7 +383,9 @@ class IdealistaScraper:
         return None
 
     def _get_html(self, url: str, retries: int = 3) -> Optional[str]:
-        # Modo Scrape.do: saltear browser completamente cuando el token está configurado
+        # Prioridad: Scrapfly (mejor anti-DataDome) > Scrape.do > navegador
+        if SCRAPFLY_API_KEY:
+            return self._get_html_via_scrapfly(url, retries)
         if SCRAPE_DO_TOKEN:
             return self._get_html_via_scrapedo(url, retries)
 
@@ -431,8 +478,9 @@ class IdealistaScraper:
             logger.warning("IDEALISTA_PROFILE_URLS vacio en .env")
             return []
 
-        if SCRAPE_DO_TOKEN:
-            logger.info("Modo Scrape.do activo — sin navegador, sin captchas")
+        if SCRAPFLY_API_KEY or SCRAPE_DO_TOKEN:
+            backend = "Scrapfly" if SCRAPFLY_API_KEY else "Scrape.do"
+            logger.info("Modo %s activo — sin navegador, sin captchas", backend)
             self.delay_range = (2.0, 5.0)
             self.seen_ids.clear()
             all_props: list[Property] = []

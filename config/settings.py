@@ -131,6 +131,9 @@ SCRAPE_DELAY_MAX: float = _float("SCRAPE_DELAY_MAX", 55.0)
 SCRAPE_DO_TOKENS: list[str] = [t for t in _list("SCRAPE_DO_TOKENS") if t]
 SCRAPE_DO_TOKEN: str = SCRAPE_DO_TOKENS[0] if SCRAPE_DO_TOKENS else _get("SCRAPE_DO_TOKEN")
 
+# Scrapfly — alternativa a Scrape.do, pasa DataDome con ASP residencial
+SCRAPFLY_API_KEY: str = _get("SCRAPFLY_API_KEY", "")
+
 # OpenRouter (reemplaza a Claude AI)
 OPENROUTER_API_KEY: str = _get("OPENROUTER_API_KEY")
 OPENROUTER_MODEL: str = _get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
