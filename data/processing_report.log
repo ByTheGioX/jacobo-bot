@@ -1,0 +1,207 @@
+
+======================================================================
+CICLO 2026-05-21T04:25:03.966042 → 2026-05-21T04:25:22.229308
+Propiedades procesadas: 0
+======================================================================
+
+--- TOTALES DEL CICLO ---
+  propiedades: 0
+  wp_created: 0
+  wp_updated: 0
+  wp_aborted: 0
+  wp_skipped: 0
+  fotos_subidas: 0
+  fotos_kie_fail: 0
+  fotos_home_staging: 0
+
+
+======================================================================
+CICLO 2026-05-21T04:25:58.974644 → 2026-05-21T04:26:11.866055
+Propiedades procesadas: 0
+======================================================================
+
+--- TOTALES DEL CICLO ---
+  propiedades: 0
+  wp_created: 0
+  wp_updated: 0
+  wp_aborted: 0
+  wp_skipped: 0
+  fotos_subidas: 0
+  fotos_kie_fail: 0
+  fotos_home_staging: 0
+
+
+======================================================================
+CICLO 2026-05-21T04:38:11.350725 → 2026-05-21T05:40:03.261615
+Propiedades procesadas: 28
+======================================================================
+
+[110782952] Piso en venta en Calle Molinillo del Aceite
+  WP: CREATED (post 46060)
+  Fotos: scraped=17 → selected=12 (-5 dup) → kie_sent=6 → ok=12 fail=0 → uploaded=12 | home_staging=1
+    · Reintento: propiedad sin wp_post_id
+
+[111395590] Piso en venta en Avenida Jorge Luis Borges
+  WP: CREATED (post 46082)
+  Fotos: scraped=64 → selected=20 (-44 dup) → kie_sent=2 → ok=20 fail=0 → uploaded=20 | home_staging=2
+    · Reintento: propiedad sin wp_post_id
+
+[106971678] Piso en venta en Camino Santa Paula
+  WP: CREATED (post 46100)
+  Fotos: scraped=41 → selected=16 (-25 dup) → kie_sent=9 → ok=16 fail=0 → uploaded=16 | home_staging=13
+    · Reintento: propiedad sin wp_post_id
+
+[110519456] Chalet adosado en venta en Paseo de la Sierra
+  WP: CREATED (post 46120)
+  Fotos: scraped=43 → selected=18 (-25 dup) → kie_sent=3 → ok=18 fail=0 → uploaded=18 | home_staging=4
+    · Reintento: propiedad sin wp_post_id
+
+[109277199] Casa o chalet independiente en venta en Cerrado de Calderón - Hacienda Paredes
+  WP: CREATED (post 46142)
+  Fotos: scraped=64 → selected=20 (-44 dup) → kie_sent=4 → ok=20 fail=0 → uploaded=20
+    · Reintento: propiedad sin wp_post_id
+
+[110659138] Chalet pareado en venta en Cerrado de Calderón - Hacienda Paredes
+  WP: CREATED (post 46165)
+  Fotos: scraped=69 → selected=21 (-48 dup) → kie_sent=21 → ok=21 fail=0 → uploaded=21
+    · Reintento: propiedad sin wp_post_id
+
+[110097974] Casa o chalet independiente en venta en Cerrado de Calderón - Hacienda Paredes
+  WP: CREATED (post 46188)
+  Fotos: scraped=111 → selected=21 (-90 dup) → kie_sent=18 → ok=21 fail=0 → uploaded=21
+    · Reintento: propiedad sin wp_post_id
+
+[97522429] Chalet adosado en venta en Pedregalejo - Morlaco
+  WP: CREATED (post 46206)
+  Fotos: scraped=48 → selected=16 (-32 dup) → kie_sent=16 → ok=16 fail=0 → uploaded=16 | home_staging=4
+    · Reintento: propiedad sin wp_post_id
+
+[110814373] Piso en venta en Pj Miramar Del Palo
+  WP: CREATED (post 46220)
+  Fotos: scraped=21 → selected=12 (-9 dup) → kie_sent=3 → ok=12 fail=0 → uploaded=12 | home_staging=5
+    · Reintento: propiedad sin wp_post_id
+
+[109279679] Piso en venta en Calle Marcos Zapata
+  WP: ABORTED
+  Fotos: scraped=38 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110922785] Piso en venta en Calle Armengual de la Mota
+  WP: ABORTED
+  Fotos: scraped=22 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[107685699] Chalet pareado en venta en La Cala del Moral
+  WP: ABORTED
+  Fotos: scraped=61 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110729569] Chalet pareado en venta en El Palo
+  WP: ABORTED
+  Fotos: scraped=34 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[109454426] Piso en venta en Pedregalejo - Morlaco
+  WP: ABORTED
+  Fotos: scraped=30 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[108901397] Piso en venta en Limonar
+  WP: ABORTED
+  Fotos: scraped=63 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110808784] Piso en venta en Calle Olózaga
+  WP: ABORTED
+  Fotos: scraped=9 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110535686] Piso en venta en Calle Bailaora Carmen Amaya
+  WP: ABORTED
+  Fotos: scraped=11 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110674654] Piso en venta en CL Duquesa De Parcent
+  WP: ABORTED
+  Fotos: scraped=31 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110435987] Piso en venta en CL Martinez De La Rosa, 39
+  WP: ABORTED
+  Fotos: scraped=20 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[111003024] Ático en venta en Pasillo de Santa Isabel
+  WP: ABORTED
+  Fotos: scraped=27 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110991729] Piso en venta en Avenida Fuengirola
+  WP: ABORTED
+  Fotos: scraped=16 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[108840698] Casa o chalet independiente en venta en Calle Orégano
+  WP: ABORTED
+  Fotos: scraped=54 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[110862060] Piso en venta en CL Virgen De La Concepcion
+  WP: ABORTED
+  Fotos: scraped=23 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[96332250] Dúplex en venta en Centro Histórico
+  WP: ABORTED
+  Fotos: scraped=27 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[105684394] Piso en venta en Centro Histórico
+  WP: ABORTED
+  Fotos: scraped=34 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[109599749] Casa o chalet independiente en venta en Rancho Domingo - La Hacienda
+  WP: ABORTED
+  Fotos: scraped=64 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[111460478] Piso en venta en Paseo Reding
+  WP: ABORTED
+  Fotos: scraped=36 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+[111494440] Ático en venta en Andromeda
+  WP: ABORTED
+  Fotos: scraped=26 → selected=0 → kie_sent=0 → ok=0 fail=0 → uploaded=0
+    · Reintento: propiedad sin wp_post_id
+    · 0 fotos seleccionadas (clasificador)
+
+--- TOTALES DEL CICLO ---
+  propiedades: 28
+  wp_created: 9
+  wp_updated: 0
+  wp_aborted: 19
+  wp_skipped: 0
+  fotos_subidas: 156
+  fotos_kie_fail: 0
+  fotos_home_staging: 29
+
