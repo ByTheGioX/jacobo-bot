@@ -24,12 +24,14 @@ _MODEL = "seedream/5-lite-image-to-image"
 
 _ENHANCE_PROMPT = (
     "Professional real estate photograph enhancement. "
-    "REMOVE: every watermark, text overlay, logo, and brand name visible anywhere in the image, "
-    "including 'idealista', agency names, and any website URLs. "
-    "ENHANCE: natural bright light, correct white balance, HDR-quality contrast and sharpness. "
+    "MANDATORY FIRST STEP — REMOVE WITHOUT EXCEPTION: every watermark, semi-transparent text, "
+    "logo, brand name, agency name, website URL, and any overlay text visible ANYWHERE in the image "
+    "(corners, edges, center). This includes 'idealista', 'fotocasa', 'pisos.com', and any other text. "
+    "The output image MUST contain ZERO text, ZERO logos, ZERO watermarks — this is non-negotiable. "
+    "THEN ENHANCE: natural bright light, correct white balance, HDR-quality contrast and sharpness. "
     "PRESERVE: exact room layout, all existing furniture, architectural details, "
     "original composition, and the original 16:9 aspect ratio — do NOT crop, stretch, or pad. "
-    "Output: clean, magazine-quality real estate photo with zero text or logos."
+    "Output: clean, magazine-quality real estate photo with absolutely no text or logos of any kind."
 )
 
 _STAGING_PROMPT = (

@@ -38,12 +38,22 @@ _ROOM_TYPES = ["fachada", "salon", "cocina", "dormitorio", "bano", "terraza", "e
 _CLASSIFY_PROMPT = (
     "Analyze this real estate photo. Respond ONLY with valid JSON, no other text. Schema:\n"
     '{"type": "<one of: fachada, salon, cocina, dormitorio, bano, terraza, exterior, otro>",\n'
-    ' "empty": <true if room has no furniture, false otherwise>,\n'
-    ' "shot": "<wide if it is a wide/panoramic full-room view, close if it is a detail/close-up>"}\n\n'
-    "Type meanings: fachada=building facade. salon=living/dining room. cocina=kitchen. "
-    "dormitorio=bedroom. bano=bathroom. terraza=terrace/balcony/patio. "
-    "exterior=garden/pool/outdoor. otro=floor plan/corridor/unclear.\n"
-    "An empty room has no sofa, table, bed, etc — bare walls and floor only."
+    ' "empty": <true only if the room has absolutely NO main furniture, false otherwise>,\n'
+    ' "shot": "<wide if it shows the full room panoramically, close if it is a detail or partial view>"}\n\n'
+    "Type meanings:\n"
+    "  fachada = building exterior or facade.\n"
+    "  salon = living room or dining room.\n"
+    "  cocina = kitchen.\n"
+    "  dormitorio = bedroom — only if it has a bed or clear space for one as a sleeping room.\n"
+    "  bano = bathroom.\n"
+    "  terraza = terrace, balcony, or patio.\n"
+    "  exterior = garden, pool, or outdoor area.\n"
+    "  otro = floor plan, corridor, hallway, wardrobe room, vestidor, armario, laundry, or unclear.\n\n"
+    "CRITICAL RULES:\n"
+    "- Wardrobes, walk-in closets, vestidores, and armario rooms MUST be 'otro', never 'dormitorio'.\n"
+    "- empty=true ONLY if there is zero main furniture (no bed, sofa, table, chairs). "
+    "A room with even one piece of furniture, a mirror, or clothes hanging is empty=false.\n"
+    "- shot=close for any detail shot, close-up, partial view, or image that does not show the full room."
 )
 
 # Cuántas fotos conservar por tipo de estancia
@@ -70,7 +80,8 @@ _IDEALISTA_LABEL_MAP = {
 }
 
 # Umbral de hamming distance para considerar dos pHash como "casi idénticas" (0=idéntica, 64=opuesta).
-_PHASH_DUP_THRESHOLD = 6
+# 10 bits = ~15% diferencia — captura duplicados con ligeros cambios de ángulo o compresión.
+_PHASH_DUP_THRESHOLD = 10
 
 
 def _label_from_idealista(label: str) -> str | None:
@@ -263,20 +274,30 @@ def select_best_photos(
         rt = classifications.get(url, {}).get("type", "otro")
         buckets[rt].append(url)
 
-    # Dentro de cada bucket: deduplicar pHash + preferir wide shots
+    # Dentro de cada bucket: deduplicar pHash + solo wide shots
+    # Close-ups (detalles) no aptan valor al listado y se descartan.
+    # Excepción: si un tipo no tiene ninguna wide, se acepta 1 close como último recurso.
     selected_urls: list[str] = []
     dup_counts: dict[str, int] = {}
+    close_fallback_count = 0
     for rt in _ROOM_TYPES:
         quota = _ROOM_QUOTA.get(rt, 0)
         if quota == 0 or not buckets[rt]:
             continue
         deduped = _dedupe_by_phash(buckets[rt], phashes)
         dup_counts[rt] = len(buckets[rt]) - len(deduped)
-        # Ordenar: wide primero, close después (estable, preserva orden original dentro de grupo)
         wide = [u for u in deduped if classifications.get(u, {}).get("shot") == "wide"]
         close = [u for u in deduped if classifications.get(u, {}).get("shot") != "wide"]
-        ordered = wide + close
-        selected_urls.extend(ordered[:quota])
+        if wide:
+            selected_urls.extend(wide[:quota])
+        elif close:
+            # Sin wide shots: aceptar 1 close como mínimo para no dejar el tipo sin foto
+            selected_urls.append(close[0])
+            close_fallback_count += 1
+            logger.debug("  [%s] sin wide shots — 1 close aceptado como fallback", rt)
+
+    if close_fallback_count:
+        logger.info("Close shots aceptados como fallback (sin wide disponible): %d", close_fallback_count)
 
     if any(v for v in dup_counts.values()):
         logger.info("Duplicados eliminados por pHash: %s",
