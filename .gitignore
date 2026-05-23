@@ -15,11 +15,14 @@ env/
 # Configuración con API keys (nunca al repo)
 configuracion/
 
-# Datos generados por el bot
-data/
+# Fotos procesadas (pesadas, no van al repo)
+data/photos/
 
-# Logs
-*.log
+# Base de datos SQLite (binario, no va al repo)
+data/*.db
+
+# Logs sí van al repo para análisis
+
 
 # macOS
 .DS_Store
