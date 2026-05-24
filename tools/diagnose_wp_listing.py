@@ -26,13 +26,15 @@ logger = logging.getLogger(__name__)
 
 # Metas que Houzez requiere para que la propiedad aparezca en listados públicos
 _REQUIRED_METAS = [
-    "fave_property_status",   # slug: "for-sale" o "for-rent"
+    "fave_property_status",   # slug: "en-venta" o "en-alquiler" (Houzez/WPML español)
     "fave_property_price",
     "fave_property_id",
     "fave_property_type",
 ]
 
-_VALID_STATUS_SLUGS = {"for-sale", "for-rent", "venta", "alquiler"}
+# Slugs válidos en sitio español. Los slugs ingleses (for-sale/for-rent) NO
+# aparecen en listing-v6-full-width porque WPML los creó como "en-venta"/"en-alquiler".
+_VALID_STATUS_SLUGS = {"en-venta", "en-alquiler"}
 
 
 def _fetch_all_properties(wp: WPClient) -> list[dict]:
@@ -97,12 +99,13 @@ def _analyze(prop: dict, meta: dict[str, str]) -> dict:
 
 
 def _fix_status_meta(wp: WPClient, prop_id: int, current_meta: dict[str, str]) -> bool:
-    """Setea fave_property_status='for-sale' si está vacío o con label en español."""
+    """Setea fave_property_status al slug español correcto si está vacío o inválido."""
     current = current_meta.get("fave_property_status", "")
     if current in _VALID_STATUS_SLUGS:
         return False  # ya está bien
-    # Inferir slug: si el label dice 'alquiler' → for-rent, si no → for-sale
-    new_slug = "for-rent" if "alqu" in current.lower() else "for-sale"
+    # Inferir slug: si dice 'alqu' o 'rent' → en-alquiler, si no → en-venta
+    is_rent = "alqu" in current.lower() or "rent" in current.lower()
+    new_slug = "en-alquiler" if is_rent else "en-venta"
     ok = wp.set_post_meta(prop_id, {"fave_property_status": new_slug})
     if ok:
         logger.info("Fix aplicado a post %d: fave_property_status='%s' → '%s'", prop_id, current, new_slug)
@@ -161,7 +164,7 @@ def main():
     print(f"Total propiedades:           {total}")
     print(f"Listas para aparecer:        {ok}")
     print(f"Sin fave_property_status:    {missing_status}")
-    print(f"Status con label inválido:   {invalid}  (deber ser slug: for-sale / for-rent)")
+    print(f"Status con label inválido:   {invalid}  (debe ser slug: en-venta / en-alquiler)")
     if args.fix_meta:
         print(f"Metas corregidas:            {fixed}")
     print(f"\nCSV completo: {args.csv}")

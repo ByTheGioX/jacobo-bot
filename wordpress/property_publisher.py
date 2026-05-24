@@ -83,7 +83,8 @@ class PropertyPublisher:
 
         # Meta campos Houzez — se guardan vía XML-RPC (REST API no los persiste).
         # IMPORTANTE: el shortcode de Houzez (listing-v6-full-width) filtra por slug,
-        # NO por label. fave_property_status DEBE ser el slug ("for-sale" / "for-rent").
+        # NO por label. fave_property_status DEBE ser el slug español ("en-venta" / "en-alquiler")
+        # porque WPML creó los términos en el idioma del sitio.
         meta: dict = {
             "fave_property_price":        str(prop.price or 0),
             "fave_property_price_postfix": "EUR",
