@@ -83,10 +83,30 @@ def _rewrite(current: str) -> str:
     return new_id
 
 
+def _set_meta_with_retry(wp: WPClient, post_id: int, meta: dict, max_retries: int = 4) -> bool:
+    """Reintenta hasta max_retries veces con backoff exponencial cuando hay timeout."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            ok = wp.set_post_meta(post_id, meta)
+            if ok:
+                return True
+        except Exception as e:
+            logger.warning("  intento %d falló (%s) — esperando antes de reintentar", attempt, str(e)[:80])
+        if attempt < max_retries:
+            wait = 30 * attempt  # 30s, 60s, 90s
+            logger.info("  esperando %ds para reintentar post %d...", wait, post_id)
+            time.sleep(wait)
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Reescribe fave_property_id con códigos cortos")
     parser.add_argument("--apply", action="store_true", help="Aplica los cambios (sin esto, solo muestra)")
     parser.add_argument("--limit", type=int, default=0, help="Procesa solo N propiedades")
+    parser.add_argument("--write-sleep", type=int, default=15,
+                        help="Segundos de espera entre escrituras (default 15). Sube si la web se cae.")
+    parser.add_argument("--skip-analyze", action="store_true",
+                        help="Salta el análisis previo y aplica solo a las que no están en _VALID_STATUS_SLUGS (resume rápido)")
     args = parser.parse_args()
 
     if not AGENCY_CODES:
@@ -120,17 +140,21 @@ def main():
         print("\nPara aplicar: vuelve a correr con --apply")
         return
 
-    print("\nAplicando cambios...")
+    print(f"\nAplicando cambios (sleep {args.write_sleep}s + reintentos con backoff)...")
     fixed = 0
-    for post_id, _current, new_id in to_change:
-        ok = wp.set_post_meta(post_id, {"fave_property_id": new_id})
-        if ok:
+    failed: list[int] = []
+    for i, (post_id, _current, new_id) in enumerate(to_change, 1):
+        logger.info("[%d/%d] escribiendo post %d → '%s'", i, len(to_change), post_id, new_id)
+        if _set_meta_with_retry(wp, post_id, {"fave_property_id": new_id}):
             fixed += 1
-            logger.info("  OK post %d → '%s'", post_id, new_id)
+            logger.info("  OK post %d", post_id)
         else:
-            logger.error("  FAIL post %d", post_id)
-        time.sleep(2)
+            failed.append(post_id)
+            logger.error("  FAIL definitivo post %d", post_id)
+        time.sleep(args.write_sleep)
     print(f"\nArreglados: {fixed}/{len(to_change)}")
+    if failed:
+        print(f"Fallaron (servidor lento, reintentar): {failed}")
 
 
 if __name__ == "__main__":
