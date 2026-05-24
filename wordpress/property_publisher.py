@@ -38,6 +38,40 @@ def _clean_text(text: str) -> str:
     return re.sub(r"  +", " ", text).strip()
 
 
+# Patrones de oraciones con CTA de contacto (frases enteras que se eliminan completas)
+_CONTACT_SENTENCE_PATTERNS = [
+    r"[^\.\!\?]*\b(whatsapp|wasap|wassap)\b[^\.\!\?]*[\.\!\?]",
+    r"[^\.\!\?]*\bno dudes? en (contactar|llamar|escribir)[^\.\!\?]*[\.\!\?]",
+    r"[^\.\!\?]*\b(para más información|para ampliar información)[^\.\!\?]*[\.\!\?]",
+    r"[^\.\!\?]*\b(contacta|contactanos|contáctanos|contactar con nosotros)[^\.\!\?]*[\.\!\?]",
+    r"[^\.\!\?]*\b(llamada|llamar|llámanos|llamanos)\b[^\.\!\?]*[\.\!\?]",
+    r"[^\.\!\?]*\b(número de contacto|teléfono de contacto|teléfono)\b[^\.\!\?]*[\.\!\?]",
+    r"[^\.\!\?]*\b(tu nuevo hogar te espera|te esperamos)\b[^\.\!\?]*[\.\!\?]",
+]
+
+
+def _strip_contact_info(text: str) -> str:
+    """Elimina del texto cualquier dato de contacto (teléfonos, emails, URLs, CTAs)."""
+    if not text:
+        return text
+    # 1) Oraciones completas con CTA de contacto
+    for pat in _CONTACT_SENTENCE_PATTERNS:
+        text = re.sub(pat, "", text, flags=re.IGNORECASE)
+    # 2) Emails
+    text = re.sub(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b", "", text)
+    # 3) URLs
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"\bwww\.\S+", "", text)
+    # 4) Teléfonos españoles: 9 dígitos con espacios/guiones/puntos opcionales,
+    #    posiblemente precedidos por +34 o 0034.
+    text = re.sub(r"(?:\+?34[\s\-\.]*)?\b\d{3}[\s\-\.]?\d{2,3}[\s\-\.]?\d{2,3}[\s\-\.]?\d{0,2}\b", "", text)
+    # 5) Limpiar dobles espacios y espacios antes de puntuación que dejó la sanitización
+    text = re.sub(r"\s+([\.,;:!\?])", r"\1", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+    return text.strip()
+
+
 class PropertyPublisher:
     def __init__(self):
         self.wp = WPClient()
@@ -153,19 +187,29 @@ class PropertyPublisher:
             return None
 
     def _rewrite_description(self, raw: str, prop: Property) -> str:
-        """Reescribe la descripción con IA para que sea única. Fallback: texto original."""
-        if not raw or not OPENROUTER_API_KEY:
+        """Reescribe la descripción con IA para que sea única. Fallback: texto original.
+        Elimina datos de contacto (teléfonos, emails, URLs) antes y después del rewrite.
+        """
+        if not raw:
             return raw
+        # Sanitización pre-AI: limpiar contactos del texto de entrada para que el AI
+        # ni siquiera los vea y no pueda reproducirlos.
+        clean_raw = _strip_contact_info(raw)
+        if not OPENROUTER_API_KEY:
+            return clean_raw
         context = f"Tipo: {prop.property_type}, {prop.rooms or '?'} hab., {prop.bathrooms or '?'} baños, {prop.area_m2 or '?'} m², {prop.location}."
         prompt = (
             "Eres un copywriter inmobiliario profesional en España. "
             "IMPORTANTE: Responde ÚNICAMENTE en español. Está terminantemente prohibido usar inglés. "
             "Reescribe la siguiente descripción de una propiedad para que sea atractiva, única y no sea una copia literal. "
-            "Conserva TODOS los datos concretos (habitaciones, metros, ubicación, características). "
+            "Conserva los datos concretos sobre la propiedad (habitaciones, metros, ubicación, características). "
+            "PROHIBIDO incluir: números de teléfono, emails, URLs, WhatsApp, instrucciones de contacto "
+            "('llamar', 'contactar', 'no dudes en…'), ni el nombre de ninguna inmobiliaria o agencia. "
+            "La descripción debe hablar SOLO de la propiedad — nunca de cómo contactar al vendedor. "
             "Tono profesional pero cercano, máximo 200 palabras. "
             "Devuelve SOLO el texto de la descripción en español, sin encabezados ni comentarios.\n\n"
             f"Contexto: {context}\n\n"
-            f"Descripción original:\n{raw[:1500]}"
+            f"Descripción original:\n{clean_raw[:1500]}"
         )
         try:
             resp = requests.post(
@@ -174,7 +218,7 @@ class PropertyPublisher:
                 json={
                     "model": OPENROUTER_MODEL,
                     "messages": [
-                        {"role": "system", "content": "Eres un copywriter inmobiliario español. SIEMPRE respondes en español. Nunca uses inglés."},
+                        {"role": "system", "content": "Eres un copywriter inmobiliario español. SIEMPRE respondes en español. Nunca uses inglés. Nunca incluyes datos de contacto."},
                         {"role": "user", "content": prompt},
                     ],
                     "max_tokens": 400,
@@ -184,8 +228,10 @@ class PropertyPublisher:
             resp.raise_for_status()
             rewritten = resp.json()["choices"][0]["message"]["content"].strip()
             if rewritten:
-                logger.info("Descripcion reescrita con IA (%d -> %d chars)", len(raw), len(rewritten))
-                return rewritten
+                # Doble seguridad: sanitizar también el output del AI por si conservó algo.
+                final = _strip_contact_info(rewritten)
+                logger.info("Descripcion reescrita con IA (%d -> %d chars)", len(raw), len(final))
+                return final
         except requests.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
             if status == 402:
@@ -195,7 +241,7 @@ class PropertyPublisher:
             logger.warning("Error reescribiendo descripción con IA: %s — usando original", e)
         except Exception as e:
             logger.warning("Error reescribiendo descripción con IA: %s — usando original", e)
-        return raw
+        return clean_raw
 
     def _build_excerpt(self, prop: Property) -> str:
         """Genera un resumen corto con los datos clave de la propiedad."""

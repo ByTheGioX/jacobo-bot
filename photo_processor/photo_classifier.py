@@ -80,8 +80,9 @@ _IDEALISTA_LABEL_MAP = {
 }
 
 # Umbral de hamming distance para considerar dos pHash como "casi idénticas" (0=idéntica, 64=opuesta).
-# 10 bits = ~15% diferencia — captura duplicados con ligeros cambios de ángulo o compresión.
-_PHASH_DUP_THRESHOLD = 10
+# 14 bits = ~22% diferencia — agresivo, captura misma habitación desde 2 ángulos ligeramente distintos
+# (ej: dormitorio twin fotografiado desde la puerta y desde una esquina).
+_PHASH_DUP_THRESHOLD = 14
 
 
 def _label_from_idealista(label: str) -> str | None:

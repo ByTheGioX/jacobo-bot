@@ -24,9 +24,12 @@ _MODEL = "seedream/5-lite-image-to-image"
 
 _ENHANCE_PROMPT = (
     "Professional real estate photograph enhancement. "
-    "MANDATORY FIRST STEP — REMOVE WITHOUT EXCEPTION: every watermark, semi-transparent text, "
-    "logo, brand name, agency name, website URL, and any overlay text visible ANYWHERE in the image "
-    "(corners, edges, center). This includes 'idealista', 'fotocasa', 'pisos.com', and any other text. "
+    "MANDATORY FIRST STEP — REMOVE WITHOUT EXCEPTION every watermark, including those that are: "
+    "semi-transparent, low-opacity, blended with the background, camouflaged on walls/furniture/sky/floor, "
+    "stylized as 'iiii', 'idealista', 'fotocasa', 'pisos.com', or any letters/dots arranged horizontally. "
+    "Look especially in image CENTERS and behind objects (beds, chairs, walls) for subtle text patterns. "
+    "Watermarks may appear as faint repeating characters that look like decoration but ARE NOT — REMOVE them. "
+    "Reconstruct the wall/surface behind any removed watermark to look completely natural. "
     "The output image MUST contain ZERO text, ZERO logos, ZERO watermarks — this is non-negotiable. "
     "THEN ENHANCE: natural bright light, correct white balance, HDR-quality contrast and sharpness. "
     "PRESERVE: exact room layout, all existing furniture, architectural details, "
@@ -98,7 +101,7 @@ class KieAiClient:
                 "prompt": prompt,
                 "image_urls": [image_url],
                 "aspect_ratio": "16:9",
-                "quality": "basic",
+                "quality": "high",
                 "nsfw_checker": False,
             },
         }
