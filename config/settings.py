@@ -42,6 +42,41 @@ def _build_agencies(cfg: dict) -> list[dict]:
 _TXT = _load_txt_config()
 
 
+def _load_agency_table() -> tuple[list[str], dict[str, str]]:
+    """Lee configuracion/perfiles*.txt como tabla con formato pipe-separado:
+
+        NOMBRE | URL_IDEALISTA | CODIGO_INTERNO
+
+    Una línea por agencia. Líneas con # al inicio se ignoran.
+    Devuelve (urls_idealista, mapeo_slug_a_codigo).
+    """
+    import re as _re
+    config_dir = Path(__file__).parent.parent / "configuracion"
+    urls: list[str] = []
+    codes: dict[str, str] = {}
+    if not config_dir.exists():
+        return urls, codes
+    for txt_file in sorted(config_dir.glob("perfiles*.txt")):
+        for raw in txt_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 3:
+                continue
+            _name, url, code = parts[0], parts[1], parts[2]
+            if not url or not code:
+                continue
+            urls.append(url)
+            m = _re.search(r"/pro/([^/]+)/", url)
+            if m:
+                codes[m.group(1)] = code
+    return urls, codes
+
+
+_TABLE_URLS, _TABLE_CODES = _load_agency_table()
+
+
 def _get(key: str, default: str = "") -> str:
     """TXT files tienen prioridad sobre .env."""
     val = _TXT.get(key)
@@ -73,8 +108,8 @@ def _float(key: str, default: float) -> float:
 # Variables de configuración
 # ──────────────────────────────────────────────────────────────
 
-# Idealista
-IDEALISTA_PROFILE_URLS: list[str] = _list("IDEALISTA_PROFILE_URLS")
+# Idealista (la tabla configuracion/perfiles*.txt tiene prioridad sobre .env)
+IDEALISTA_PROFILE_URLS: list[str] = _TABLE_URLS if _TABLE_URLS else _list("IDEALISTA_PROFILE_URLS")
 
 # Kie.ai
 KIE_AI_API_KEY: str = _get("KIE_AI_API_KEY")
@@ -134,14 +169,16 @@ SCRAPE_DO_TOKEN: str = SCRAPE_DO_TOKENS[0] if SCRAPE_DO_TOKENS else _get("SCRAPE
 # Scrapfly — alternativa a Scrape.do, pasa DataDome con ASP residencial
 SCRAPFLY_API_KEY: str = _get("SCRAPFLY_API_KEY", "")
 
-# Mapeo de slug de perfil Idealista → código interno corto (oculta el nombre de la agencia
-# real en fave_property_id). Ej: {"inmobiliariavasanco":"3VCO", "gestion-freshlanding":"2FL"}.
-# Se configura como JSON en AGENCY_CODES del .env o configuracion/*.txt.
-_agency_codes_raw = _get("AGENCY_CODES", "")
-try:
-    AGENCY_CODES: dict[str, str] = json.loads(_agency_codes_raw) if _agency_codes_raw else {}
-except json.JSONDecodeError:
-    AGENCY_CODES = {}
+# Mapeo slug Idealista → código corto interno (oculta el nombre de la agencia origen).
+# Fuente preferida: tabla configuracion/perfiles*.txt. Fallback: AGENCY_CODES JSON en .env.
+if _TABLE_CODES:
+    AGENCY_CODES: dict[str, str] = _TABLE_CODES
+else:
+    _agency_codes_raw = _get("AGENCY_CODES", "")
+    try:
+        AGENCY_CODES = json.loads(_agency_codes_raw) if _agency_codes_raw else {}
+    except json.JSONDecodeError:
+        AGENCY_CODES = {}
 
 # OpenRouter (reemplaza a Claude AI)
 OPENROUTER_API_KEY: str = _get("OPENROUTER_API_KEY")

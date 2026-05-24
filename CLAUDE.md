@@ -123,7 +123,7 @@ tail -f data/jacobo_bot.log
 
 Toda la configuración vive en `.env`. Variables clave:
 
-- **Idealista**: `IDEALISTA_PROFILE_URLS` (URLs de agencias a monitorear, separadas por coma)
+- **Idealista (perfiles + códigos)**: tabla `configuracion/perfiles.txt` — una línea por agencia con formato `NOMBRE | URL_IDEALISTA | CODIGO_INTERNO`. Esa tabla define qué se scrapea y qué código corto aparece en `fave_property_id` (oculta el nombre de la agencia origen). Si la tabla no existe, fallback al `.env` con `IDEALISTA_PROFILE_URLS` + `AGENCY_CODES` (JSON).
 - **KIE.AI**: `KIE_AI_API_KEY` (mejora de fotos), `MAX_PHOTOS_PER_PROPERTY` (control de costos)
 - **WordPress**: `WP_URL`, `WP_USER`, `WP_APP_PASSWORD`, `WP_PROPERTY_POST_TYPE=property` (Houzez), `WP_PROPERTY_REST_BASE=properties`
 - **Base de Datos**: `DB_PATH` (ubicación SQLite, por defecto `data/jacobo_bot.db`)
