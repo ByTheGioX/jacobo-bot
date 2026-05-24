@@ -11,7 +11,7 @@ from typing import Optional
 from scraper.idealista_scraper import Property
 from wordpress.wp_client import WPClient
 from photo_processor.photo_classifier import OpenRouterNoCreditsError
-from config.settings import WP_PROPERTY_REST_BASE, COMPETITOR_BRANDS, OPENROUTER_API_KEY, OPENROUTER_MODEL
+from config.settings import WP_PROPERTY_REST_BASE, COMPETITOR_BRANDS, OPENROUTER_API_KEY, OPENROUTER_MODEL, AGENCY_CODES
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,8 @@ class PropertyPublisher:
         report=None,
     ) -> Optional[int]:
         """Crea o actualiza un post de propiedad en WordPress/Houzez."""
-        media_ids = self._upload_photos(prop.idealista_id, processed_photos)
+        internal_ref = self._build_property_id(prop)
+        media_ids = self._upload_photos(internal_ref, processed_photos)
         if report is not None:
             report.photos_uploaded_wp = len(media_ids)
         featured_id = media_ids[0] if media_ids else None
@@ -215,14 +216,15 @@ class PropertyPublisher:
 
     @staticmethod
     def _build_property_id(prop) -> str:
-        """Genera el ID interno de la propiedad usando el código de agencia extraído del URL.
-        Ejemplo: https://...idealista.com/pro/inmobiliariavasanco/inmueble/111460478/
-                 → 'inmobiliariavasanco-111460478'
-        Si el URL no contiene /pro/<agencia>/, usa 'idealista' como fallback.
+        """Genera el ID interno público sin exponer el nombre de la agencia origen.
+        Usa el mapeo AGENCY_CODES (.env): slug Idealista → código corto interno.
+        Ej: 'inmobiliariavasanco' → '3VCO' → '3VCO-111460478'.
+        Si la agencia no está mapeada, usa 'REF' como prefijo neutro.
         """
         m = re.search(r'/pro/([^/]+)/', prop.url or "")
-        agency = m.group(1) if m else "idealista"
-        return f"{agency}-{prop.idealista_id}"
+        agency_slug = m.group(1) if m else ""
+        short_code = AGENCY_CODES.get(agency_slug, "REF")
+        return f"{short_code}-{prop.idealista_id}"
 
     def unpublish(self, wp_post_id: int):
         try:
@@ -231,7 +233,7 @@ class PropertyPublisher:
         except Exception as e:
             logger.error("Error eliminando post WP %s: %s", wp_post_id, e)
 
-    def _upload_photos(self, idealista_id: str, processed_photos: list[dict]) -> list[int]:
+    def _upload_photos(self, internal_ref: str, processed_photos: list[dict]) -> list[int]:
         media_ids = []
         for idx, photo in enumerate(processed_photos):
             # Solo subir fotos procesadas por KIE.AI — nunca las originales descargadas
@@ -241,7 +243,7 @@ class PropertyPublisher:
             local_path = photo.get("local_path")
             if not local_path:
                 continue
-            title = f"Propiedad {idealista_id} foto {idx + 1}"
+            title = f"Propiedad {internal_ref} foto {idx + 1}"
             media = self.wp.upload_media(local_path, title)
             if media:
                 logger.info("  [WP] Foto %d subida (media ID %s)", idx + 1, media["id"])

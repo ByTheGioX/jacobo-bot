@@ -134,6 +134,15 @@ SCRAPE_DO_TOKEN: str = SCRAPE_DO_TOKENS[0] if SCRAPE_DO_TOKENS else _get("SCRAPE
 # Scrapfly — alternativa a Scrape.do, pasa DataDome con ASP residencial
 SCRAPFLY_API_KEY: str = _get("SCRAPFLY_API_KEY", "")
 
+# Mapeo de slug de perfil Idealista → código interno corto (oculta el nombre de la agencia
+# real en fave_property_id). Ej: {"inmobiliariavasanco":"3VCO", "gestion-freshlanding":"2FL"}.
+# Se configura como JSON en AGENCY_CODES del .env o configuracion/*.txt.
+_agency_codes_raw = _get("AGENCY_CODES", "")
+try:
+    AGENCY_CODES: dict[str, str] = json.loads(_agency_codes_raw) if _agency_codes_raw else {}
+except json.JSONDecodeError:
+    AGENCY_CODES = {}
+
 # OpenRouter (reemplaza a Claude AI)
 OPENROUTER_API_KEY: str = _get("OPENROUTER_API_KEY")
 OPENROUTER_MODEL: str = _get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
