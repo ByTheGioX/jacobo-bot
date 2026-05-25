@@ -5,6 +5,7 @@ Limpia menciones a inmobiliarias competidoras del título y descripción.
 
 import logging
 import re
+from pathlib import Path
 import requests
 from typing import Optional
 
@@ -289,12 +290,51 @@ class PropertyPublisher:
             local_path = photo.get("local_path")
             if not local_path:
                 continue
+            # Optimizar para web (resize + recompresión) ANTES de subir.
+            # KIE.AI devuelve ~5MB por foto; optimizada queda en ~300KB.
+            upload_path = self._optimize_for_web(local_path)
             title = f"Propiedad {internal_ref} foto {idx + 1}"
-            media = self.wp.upload_media(local_path, title)
+            media = self.wp.upload_media(upload_path, title)
             if media:
                 logger.info("  [WP] Foto %d subida (media ID %s)", idx + 1, media["id"])
                 media_ids.append(media["id"])
         return media_ids
+
+    @staticmethod
+    def _optimize_for_web(input_path: str, max_width: int = 1920, quality: int = 85) -> str:
+        """Reduce el tamaño de la foto antes de subir: resize a max_width + JPEG quality 85.
+        KIE.AI devuelve ~5MB por imagen; tras esto queda ~250-400KB sin pérdida visual.
+        Cachea el resultado en data/photos/<id>/web/ para no re-optimizar en reintentos.
+        """
+        try:
+            from PIL import Image
+        except ImportError:
+            return input_path  # sin Pillow no optimizamos, subimos original
+        in_path = Path(input_path)
+        out_dir = in_path.parent / "web"
+        out_dir.mkdir(exist_ok=True)
+        out_path = out_dir / (in_path.stem + ".jpg")
+        if out_path.exists():
+            return str(out_path)
+        try:
+            img = Image.open(in_path)
+            if img.mode in ("RGBA", "P", "LA"):
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
+                img = bg
+            elif img.mode != "RGB":
+                img = img.convert("RGB")
+            if img.width > max_width:
+                ratio = max_width / img.width
+                img = img.resize((max_width, int(img.height * ratio)), Image.Resampling.LANCZOS)
+            img.save(out_path, "JPEG", quality=quality, optimize=True, progressive=True)
+            in_kb = in_path.stat().st_size / 1024
+            out_kb = out_path.stat().st_size / 1024
+            logger.debug("  optimizada: %.0fKB → %.0fKB (-%d%%)", in_kb, out_kb, int(100 * (1 - out_kb / in_kb)))
+            return str(out_path)
+        except Exception as e:
+            logger.warning("Optimización falló para %s (%s) — subiendo original", input_path, e)
+            return input_path
 
     def _get_feature_ids(self, prop: Property) -> list[int]:
         features = []
