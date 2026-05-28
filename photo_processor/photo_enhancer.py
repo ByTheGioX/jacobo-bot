@@ -32,14 +32,13 @@ _FLOOR_PLAN_PATTERNS = [
 
 _VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".webm")
 
-# Mapeo de room_type del clasificador → hint específico de Home Staging
+# Mapeo de room_type del clasificador → hint específico de Home Staging.
+# Solo interiores: terraza/exterior excluidos (la IA alucina muebles en piscinas/jardines).
 _STAGING_ROOM_MAP = {
     "salon": "salon",
     "cocina": "cocina",
     "dormitorio": "dormitorio",
     "bano": "bano",
-    "terraza": "terraza",
-    "exterior": "jardin",
 }
 
 
@@ -166,7 +165,8 @@ class PhotoEnhancer:
                     executor.submit(
                         self.client.enhance_photo,
                         photo["url"],
-                        home_staging=bool(photo.get("empty")) and ENABLE_HOME_STAGING,
+                        home_staging=bool(photo.get("empty")) and ENABLE_HOME_STAGING
+                            and photo.get("room_type") in _STAGING_ROOM_MAP,
                         room_type=_STAGING_ROOM_MAP.get(photo.get("room_type")),
                     ): idx
                     for idx, photo in regular_items
