@@ -217,3 +217,45 @@ Si `ANTHROPIC_API_KEY` está configurada, las consultas de compradores usan Clau
 2. Correr siempre con `--limit 10` primero para verificar que funciona
 3. Si hay >20 propiedades, agregar `time.sleep(0.5)` entre llamadas o correr en horario de bajo tráfico
 4. Nunca correr `--reprocess` sin haber hecho primero un dry-run y revisado el CSV
+
+## Incidentes resueltos (no repetir)
+
+Lecciones documentadas de errores reales en producción. Antes de tocar estas áreas, lee la nota correspondiente.
+
+### Anti-detección y scraping
+
+**1. Scrape.do se banea con frecuencia.** Las cuentas free duran días/semanas antes de ser bloqueadas. Cuando un token marca 401 con `"inactive or incorrect"` no es un límite mensual — es ban definitivo de cuenta. No reintentar; rotar a otra cuenta o cambiar de servicio. Ver `_get_html_via_scrapedo` en [scraper/idealista_scraper.py](scraper/idealista_scraper.py).
+
+**2. Proxies datacenter (Webshare, etc.) NO pasan DataDome de Idealista.** DataDome blacklistea por ASN (Server-Mania, Leaseweb…). Con curl falla con 403 inmediato; con Camoufox + JS challenge a veces pasa la primera vez pero se quema rápido. **Para Idealista usar Scrapfly** (proxies residenciales internos) o Camoufox con hotspot móvil. Webshare gratis solo sirve como fallback de emergencia.
+
+**3. Scrapfly es la solución estable para DataDome.** ~25 créditos por request (sin `render_js`), free tier 1000/mes ≈ 40 requests. Para 30 propiedades por ciclo (listing + detail) gasta ~800. Si necesitan automatización 72h hay que pagar plan starter. Backend prioridad en [scraper/idealista_scraper.py](scraper/idealista_scraper.py): Scrapfly > Scrape.do > Camoufox.
+
+### Configuración (.env y configuracion/)
+
+**4. El parser de `.env` lee `#` como valor literal.** `SCRAPE_DO_TOKEN=#` deja `SCRAPE_DO_TOKEN` con valor `"#"` (truthy), activando modos rotos. Para desactivar una variable: **borrar la línea entera**, NO ponerle `#` al final. Comentarios solo válidos al inicio absoluto de línea.
+
+**5. Los `.txt` de `configuracion/` tienen prioridad sobre `.env`.** Si una variable está en ambos, gana el `.txt`. Si edito el `.env` y no veo el cambio, comprobar que no existe duplicada en `configuracion/*.txt`. Ver `_get()` en [config/settings.py](config/settings.py).
+
+**6. La carpeta `configuracion/` está en `.gitignore`.** `git pull` NUNCA trae los archivos de ahí. Cualquier cambio en `perfiles.txt`, `02_fotos.txt` etc. hay que replicarlo manualmente en el VPS.
+
+### WordPress / Houzez
+
+**7. `fave_property_status` requiere slug español en sitio WPML español.** El listing-v6-full-width filtra por slug del término, no por label. Si el sitio está en español, los slugs son `en-venta`/`en-alquiler`, no `for-sale`/`for-rent`. Propiedades con slug inglés no aparecen en el listing aunque tengan `status=publish`. Ver `_VALID_STATUS_SLUGS` en [tools/diagnose_wp_listing.py](tools/diagnose_wp_listing.py) y la asignación en [wordpress/property_publisher.py](wordpress/property_publisher.py).
+
+**8. `fave_property_id` se ve público — no exponer agencia origen.** El cliente prohíbe mencionar el nombre real de la inmobiliaria de origen. Usar siempre el código corto definido en `AGENCY_CODES` (tabla `configuracion/perfiles.txt`). Para arreglar IDs viejos: `python -m tools.fix_property_ids --apply`.
+
+**9. WP en CDmon (hosting compartido) limita XML-RPC.** Más de ~5 llamadas seguidas tumban el servidor PHP por 5-10 min. Cualquier loop de XML-RPC necesita: sleep ≥ 15s entre escrituras + reintentos con backoff 30s/60s/90s. Ver `_set_meta_with_retry` en [tools/fix_property_ids.py](tools/fix_property_ids.py).
+
+### Fotos KIE.AI
+
+**10. KIE devuelve fotos de 5-7 MB sin optimización.** Saturaba mediateca (~75MB/propiedad) y subidas tardaban 13s/foto. Solución aplicada en `_optimize_for_web` ([wordpress/property_publisher.py](wordpress/property_publisher.py)): resize a 1920px + JPEG q85 progressive → ~400KB/foto (-93%). **Nunca subir el original de KIE sin pasar por esta función.**
+
+**11. Marcas de agua sutiles sobreviven KIE quality=basic.** Patrones "iiii" camuflados en paredes/fondos no se eliminan. Mantener `quality: "high"` en el payload + prompt explícito sobre patrones semi-transparentes. Si vuelve a aparecer una watermark residual: subir threshold de prompt antes de bajar quality.
+
+**12. pHash threshold 10 era demasiado estricto para dedup.** Misma habitación desde ángulos ligeramente distintos pasaba el filtro. Subido a 14 (~22% diferencia). Ver `_PHASH_DUP_THRESHOLD` en [photo_processor/photo_classifier.py](photo_processor/photo_classifier.py).
+
+**13. Home Staging aluciona muebles en exteriores.** KIE pone sofás encima de piscinas y muebles flotando en fachadas cuando `empty=True` se aplica a `terraza`/`exterior`/`jardin`. Restringir staging SOLO a interiores (`salon`, `cocina`, `dormitorio`). Para exteriores: usar `_ENHANCE_PROMPT` normal sin staging aunque la IA detecte vacío.
+
+### Descripciones y contenido
+
+**14. AI rewriter conservaba teléfonos y CTAs de contacto.** El prompt original decía "conserva TODOS los datos concretos" → conservaba `607792500`, "WhatsApp", "no dudes en contactar…". Solución: prompt actualizado + `_strip_contact_info` ([wordpress/property_publisher.py](wordpress/property_publisher.py)) que elimina con regex teléfonos/emails/URLs/oraciones-CTA antes Y después del rewrite. **Nunca confiar solo en el AI para sanitizar — siempre regex de seguridad después.**
