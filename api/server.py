@@ -1,0 +1,210 @@
+"""
+Flask API server para jacobo-bot.
+Endpoints:
+  POST /api/search           — búsqueda de comprador (async, responde 202 inmediato)
+  GET  /dashboard            — HTML con estadísticas (?key=DASHBOARD_PASSWORD)
+  GET  /api/agencies         — lista agencias
+  POST /api/agencies         — añade agencia
+  DELETE /api/agencies/<id>  — elimina agencia
+Todos los endpoints excepto /dashboard requieren X-API-Secret header (o ?secret=).
+"""
+
+import json
+import logging
+import threading
+from flask import Flask, abort, jsonify, request, Response
+
+logger = logging.getLogger(__name__)
+
+_SECRET: str = ""
+_DASHBOARD_PASSWORD: str = ""
+
+
+def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
+    global _SECRET, _DASHBOARD_PASSWORD
+    _SECRET = secret
+    _DASHBOARD_PASSWORD = dashboard_password
+
+    app = Flask(__name__)
+    app.logger.setLevel(logging.WARNING)
+
+    @app.route("/api/search", methods=["POST"])
+    def search():
+        _require_secret()
+        data = request.get_json(force=True, silent=True) or {}
+        query = (data.get("query") or "").strip()
+        if not query:
+            return jsonify({"error": "query requerida"}), 400
+        name = data.get("name", "")
+        email = data.get("email", "")
+        threading.Thread(
+            target=_process_search_async,
+            args=(query, name, email),
+            daemon=True,
+        ).start()
+        return jsonify({"status": "received"}), 202
+
+    @app.route("/dashboard")
+    def dashboard():
+        key = request.args.get("key", "")
+        if _DASHBOARD_PASSWORD and key != _DASHBOARD_PASSWORD:
+            abort(401)
+        from database.db import Database
+        db = Database()
+        stats = db.get_dashboard_stats()
+        searches = db.get_recent_searches(limit=10)
+        return Response(
+            _render_dashboard_html(stats, searches),
+            content_type="text/html; charset=utf-8",
+        )
+
+    @app.route("/api/agencies", methods=["GET"])
+    def list_agencies():
+        _require_secret()
+        from database.db import Database
+        return jsonify(Database().get_all_agencies())
+
+    @app.route("/api/agencies", methods=["POST"])
+    def add_agency():
+        _require_secret()
+        data = request.get_json(force=True, silent=True) or {}
+        name  = (data.get("name")  or "").strip()
+        email = (data.get("email") or "").strip()
+        zones = data.get("zones") or []
+        if not name or not email:
+            return jsonify({"error": "name y email son obligatorios"}), 400
+        from database.db import Database
+        agency_id = Database().add_agency(name, email, zones if isinstance(zones, list) else [])
+        return jsonify({"id": agency_id, "name": name, "email": email}), 201
+
+    @app.route("/api/agencies/<int:agency_id>", methods=["DELETE"])
+    def delete_agency(agency_id: int):
+        _require_secret()
+        from database.db import Database
+        Database().delete_agency(agency_id)
+        return jsonify({"deleted": agency_id})
+
+    return app
+
+
+def _require_secret():
+    if not _SECRET:
+        return
+    provided = (
+        request.headers.get("X-API-Secret")
+        or request.args.get("secret")
+        or (request.get_json(force=True, silent=True) or {}).get("secret")
+    )
+    if provided != _SECRET:
+        abort(401)
+
+
+def _process_search_async(query: str, name: str, email: str):
+    try:
+        from search.smart_search import SmartSearch, SearchCriteria
+        from search.email_sender import AgencyEmailSender
+
+        searcher = SmartSearch()
+        result = searcher.process_query(query, contact_email=email, contact_name=name)
+
+        if result["needs_agency_email"]:
+            c = result["criteria"]
+            criteria = SearchCriteria(
+                raw_query=query,
+                contact_email=email,
+                contact_name=name,
+                location=c.get("location", ""),
+                zones=c.get("zones") or [],
+                property_type=c.get("property_type", ""),
+                operation=c.get("operation", "sale"),
+                rooms_min=c.get("rooms_min"),
+                rooms_max=c.get("rooms_max"),
+                price_max=c.get("price_max"),
+                area_min=c.get("area_min"),
+                has_parking=bool(c.get("has_parking")),
+                has_pool=bool(c.get("has_pool")),
+                has_terrace=bool(c.get("has_terrace")),
+            )
+            AgencyEmailSender().send_to_agencies(criteria, result["search_id"])
+            logger.info("Búsqueda '%s' reenviada a agencias (search_id=%s)", query[:50], result["search_id"])
+        else:
+            logger.info("Búsqueda '%s' → %d coincidencias en DB", query[:50], len(result["matches"]))
+    except Exception:
+        logger.exception("Error procesando búsqueda async: '%s'", query[:50])
+
+
+def _render_dashboard_html(stats: dict, searches: list) -> str:
+    last = stats.get("last_run") or {}
+    status_class = "ok" if last.get("status") == "success" else "err"
+
+    rows = ""
+    for s in searches:
+        try:
+            parsed = json.loads(s.get("parsed") or "{}")
+        except Exception:
+            parsed = {}
+        loc   = parsed.get("location") or "—"
+        rooms = parsed.get("rooms_min") or "—"
+        rows += (
+            f"<tr><td>#{s['id']}</td>"
+            f"<td>{_esc(s.get('contact_name') or '—')}</td>"
+            f"<td>{_esc(loc)}</td>"
+            f"<td>{rooms}</td>"
+            f"<td>{s.get('emails_sent', 0)}</td>"
+            f"<td>{str(s.get('created_at', ''))[:16]}</td></tr>\n"
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jacobo-Bot — Dashboard</title>
+<style>
+  *{{box-sizing:border-box}}
+  body{{font-family:Arial,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;color:#333}}
+  h1{{color:#2c5282;border-bottom:2px solid #4299e1;padding-bottom:8px}}
+  h2{{color:#2d3748;margin-top:32px}}
+  .stats{{display:flex;gap:20px;flex-wrap:wrap;margin:20px 0}}
+  .stat{{background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 24px;min-width:160px}}
+  .stat .n{{font-size:2.2em;font-weight:700;color:#2c5282}}
+  .stat .label{{color:#718096;font-size:.9em}}
+  table{{border-collapse:collapse;width:100%;margin-top:12px}}
+  th{{background:#4299e1;color:#fff;padding:8px 12px;text-align:left;font-weight:600}}
+  td{{padding:8px 12px;border-bottom:1px solid #e2e8f0}}
+  tr:hover td{{background:#ebf8ff}}
+  .badge{{display:inline-block;padding:2px 10px;border-radius:12px;font-size:.8em;font-weight:600}}
+  .ok{{background:#c6f6d5;color:#276749}}
+  .err{{background:#fed7d7;color:#c53030}}
+  .na{{background:#e2e8f0;color:#4a5568}}
+</style>
+</head>
+<body>
+<h1>Jacobo-Bot — Dashboard</h1>
+<div class="stats">
+  <div class="stat"><div class="n">{stats.get('active_properties', 0)}</div><div class="label">Propiedades activas</div></div>
+  <div class="stat"><div class="n">{stats.get('total_buyer_searches', 0)}</div><div class="label">Búsquedas recibidas</div></div>
+</div>
+<h2>Último ciclo de scraping</h2>
+<table>
+<tr><th>Inicio</th><th>Encontradas</th><th>Nuevas</th><th>Actualizadas</th><th>Eliminadas</th><th>Estado</th></tr>
+<tr>
+  <td>{_esc(str(last.get('started_at', '—'))[:16])}</td>
+  <td>{last.get('properties_found', '—')}</td>
+  <td>{last.get('properties_new', '—')}</td>
+  <td>{last.get('properties_updated', '—')}</td>
+  <td>{last.get('properties_removed', '—')}</td>
+  <td><span class="badge {status_class if last else 'na'}">{_esc(last.get('status', '—'))}</span></td>
+</tr>
+</table>
+<h2>Últimas búsquedas de compradores</h2>
+<table>
+<tr><th>#</th><th>Contacto</th><th>Zona</th><th>Habitaciones</th><th>Emails enviados</th><th>Fecha</th></tr>
+{rows or '<tr><td colspan="6" style="text-align:center;color:#718096;padding:20px">Sin búsquedas todavía</td></tr>'}
+</table>
+<p style="color:#a0aec0;font-size:.8em;margin-top:32px">Actualizar la página para ver datos frescos.</p>
+</body></html>"""
+
+
+def _esc(s: str) -> str:
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

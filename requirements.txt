@@ -23,3 +23,6 @@ imagehash>=4.3.0
 
 # Tipado
 typing_extensions==4.12.2
+
+# API interna
+flask>=3.0.0
