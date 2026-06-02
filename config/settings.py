@@ -187,6 +187,11 @@ OPENROUTER_MODEL: str = _get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 # Anthropic (legacy — ya no se usa)
 ANTHROPIC_API_KEY: str = _get("ANTHROPIC_API_KEY")
 
+# Flask API
+FLASK_PORT: int         = _int("FLASK_PORT", 8080)
+FLASK_SECRET: str       = _get("FLASK_SECRET", "")
+DASHBOARD_PASSWORD: str = _get("DASHBOARD_PASSWORD", "")
+
 # Scraper HTTP headers
 SCRAPER_HEADERS = {
     "User-Agent": (
