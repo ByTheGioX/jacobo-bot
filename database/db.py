@@ -278,6 +278,31 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def add_agency(self, name: str, email: str, zones: list) -> int:
+        zones_json = json.dumps(zones) if zones else "[]"
+        with self._conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO collaborating_agencies (name, email, zones)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(email) DO UPDATE SET name=excluded.name, zones=excluded.zones""",
+                (name, email, zones_json),
+            )
+            return cur.lastrowid
+
+    def delete_agency(self, agency_id: int):
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM collaborating_agencies WHERE id=?",
+                (agency_id,),
+            )
+
+    def get_all_agencies(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM collaborating_agencies ORDER BY id"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------
     # Scrape runs
     # ------------------------------------------------------------------
