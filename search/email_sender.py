@@ -5,6 +5,7 @@ no encuentra lo que busca en el listing actual.
 Usa SMTP del hosting (sin dependencias de SendGrid/Mailgun, etc.)
 """
 
+import json as _json
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -104,6 +105,30 @@ por favor responda indicándolo.
     return subject, body
 
 
+def _agency_matches_zone(agency: dict, location: str) -> bool:
+    """
+    True si la agencia debe recibir la búsqueda según su zona.
+    Si la agencia no tiene zonas configuradas → recibe siempre.
+    Si tiene zonas → solo si la location del comprador coincide (substring bidireccional).
+    """
+    zones_raw = agency.get("zones") or ""
+    if isinstance(zones_raw, list):
+        zones = [z.strip() for z in zones_raw if z.strip()]
+    elif zones_raw.strip().startswith("["):
+        try:
+            zones = _json.loads(zones_raw)
+        except Exception:
+            zones = []
+    else:
+        zones = [z.strip() for z in zones_raw.split(",") if z.strip()]
+
+    if not zones:
+        return True
+
+    loc = location.lower()
+    return any(z.lower() in loc or loc in z.lower() for z in zones)
+
+
 class AgencyEmailSender:
     def __init__(self):
         self.db = Database()
@@ -125,7 +150,14 @@ class AgencyEmailSender:
             return 0
 
         sent = 0
+        buyer_location = criteria.location or ""
         for agency in agencies:
+            if not _agency_matches_zone(agency, buyer_location):
+                logger.info(
+                    "Agencia '%s' omitida (zona no coincide con '%s')",
+                    agency["name"], buyer_location,
+                )
+                continue
             ok = self._send_email(
                 to_email=agency["email"],
                 to_name=agency["name"],
