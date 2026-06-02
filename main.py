@@ -17,6 +17,13 @@ from pathlib import Path
 # Asegurar que los módulos del proyecto están en el path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Forzar UTF-8 en la consola de Windows (cp1252 no codifica → ni emojis y crashea)
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 # Crear directorio de datos antes de configurar el log
 Path("data").mkdir(exist_ok=True)
 
@@ -66,9 +73,22 @@ def main():
         logger.info(f"Finalizado: {stats}")
         return
 
-    # Modo por defecto: scheduler continuo
-    from scheduler.main_scheduler import start_scheduler
-    start_scheduler(run_now=True)
+    # Modo por defecto: scheduler en background + Flask API en primer plano
+    from scheduler.main_scheduler import start_scheduler_background, run_monitor_job
+    from api.server import create_app
+    from config.settings import FLASK_PORT, FLASK_SECRET, DASHBOARD_PASSWORD
+
+    scheduler = start_scheduler_background()
+
+    logger.info("[MAIN] Ejecutando ciclo inicial antes de iniciar la API...")
+    run_monitor_job()
+
+    app = create_app(secret=FLASK_SECRET, dashboard_password=DASHBOARD_PASSWORD)
+    logger.info("[API] Iniciando Flask en http://0.0.0.0:%d", FLASK_PORT)
+    try:
+        app.run(host="0.0.0.0", port=FLASK_PORT, debug=False, use_reloader=False)
+    finally:
+        scheduler.shutdown(wait=False)
 
 
 def _handle_search(query: str, email: str, name: str):

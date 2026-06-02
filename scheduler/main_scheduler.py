@@ -43,3 +43,20 @@ def start_scheduler(run_now: bool = True):
 
     logger.info("[SCHEDULER] Scheduler iniciado. Proxima ejecucion en %dh.", SCRAPE_INTERVAL_HOURS)
     scheduler.start()
+
+
+def start_scheduler_background():
+    """Inicia el scheduler en modo NO bloqueante. Devuelve el scheduler iniciado."""
+    from apscheduler.schedulers.background import BackgroundScheduler
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        run_monitor_job,
+        trigger=IntervalTrigger(hours=SCRAPE_INTERVAL_HOURS),
+        id="property_monitor",
+        name="Idealista property monitor",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.start()
+    logger.info("[SCHEDULER] BackgroundScheduler iniciado. Ciclo cada %dh.", SCRAPE_INTERVAL_HOURS)
+    return scheduler

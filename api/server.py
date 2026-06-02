@@ -9,6 +9,7 @@ Endpoints:
 Todos los endpoints excepto /dashboard requieren X-API-Secret header (o ?secret=).
 """
 
+import html
 import json
 import logging
 import threading
@@ -146,12 +147,12 @@ def _render_dashboard_html(stats: dict, searches: list) -> str:
         loc   = parsed.get("location") or "—"
         rooms = parsed.get("rooms_min") or "—"
         rows += (
-            f"<tr><td>#{s['id']}</td>"
+            f"<tr><td>#{_esc(s['id'])}</td>"
             f"<td>{_esc(s.get('contact_name') or '—')}</td>"
             f"<td>{_esc(loc)}</td>"
-            f"<td>{rooms}</td>"
-            f"<td>{s.get('emails_sent', 0)}</td>"
-            f"<td>{str(s.get('created_at', ''))[:16]}</td></tr>\n"
+            f"<td>{_esc(rooms)}</td>"
+            f"<td>{_esc(s.get('emails_sent', 0))}</td>"
+            f"<td>{_esc(str(s.get('created_at', ''))[:16])}</td></tr>\n"
         )
 
     return f"""<!DOCTYPE html>
@@ -206,5 +207,5 @@ def _render_dashboard_html(stats: dict, searches: list) -> str:
 </body></html>"""
 
 
-def _esc(s: str) -> str:
-    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+def _esc(s) -> str:
+    return html.escape(str(s), quote=True)
