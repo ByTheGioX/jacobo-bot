@@ -62,7 +62,9 @@ def main():
     ap = argparse.ArgumentParser(description="Restaura propiedades borradas reutilizando fotos KIE")
     ap.add_argument("--apply", action="store_true", help="Aplica los cambios (sin esto: dry-run)")
     ap.add_argument("--limit", type=int, default=0, help="Limita a N propiedades (0 = todas)")
-    ap.add_argument("--sleep", type=float, default=4.0, help="Segundos entre propiedades (def: 4)")
+    ap.add_argument("--sleep", type=float, default=4.0, help="Segundos entre propiedades del mismo lote (def: 4)")
+    ap.add_argument("--batch", type=int, default=0, help="Procesa de a N y pausa entre lotes (0 = sin lotes)")
+    ap.add_argument("--batch-pause", type=float, default=300.0, help="Segundos de pausa entre lotes (def: 300 = 5 min)")
     args = ap.parse_args()
 
     db = Database()
@@ -132,7 +134,15 @@ def main():
             logger.error("  ERROR restaurando %s: %s", idealista_id, e)
 
         if i < len(cands):
-            time.sleep(args.sleep)
+            # Si terminó un lote completo → pausa larga entre lotes; si no, pausa corta.
+            if args.batch and i % args.batch == 0:
+                logger.info(
+                    "Lote de %d completado (%d/%d). Pausando %.0fs antes del próximo lote…",
+                    args.batch, i, len(cands), args.batch_pause,
+                )
+                time.sleep(args.batch_pause)
+            else:
+                time.sleep(args.sleep)
 
     logger.info("=== Restauración finalizada === Restauradas: %d | Fallidas: %d", restored, failed)
     if restored:
