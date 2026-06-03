@@ -73,18 +73,20 @@ def main():
         logger.info(f"Finalizado: {stats}")
         return
 
-    # Modo por defecto: scheduler en background + Flask API en primer plano
+    # Modo por defecto: Flask API disponible de inmediato + scheduler y ciclo
+    # inicial en segundo plano (la web no espera a que termine el scraping)
+    import threading
     from scheduler.main_scheduler import start_scheduler_background, run_monitor_job
     from api.server import create_app
     from config.settings import FLASK_PORT, FLASK_SECRET, DASHBOARD_PASSWORD
 
     scheduler = start_scheduler_background()
 
-    logger.info("[MAIN] Ejecutando ciclo inicial antes de iniciar la API...")
-    run_monitor_job()
+    logger.info("[MAIN] Lanzando ciclo inicial en segundo plano...")
+    threading.Thread(target=run_monitor_job, daemon=True).start()
 
     app = create_app(secret=FLASK_SECRET, dashboard_password=DASHBOARD_PASSWORD)
-    logger.info("[API] Iniciando Flask en http://0.0.0.0:%d", FLASK_PORT)
+    logger.info("[API] Iniciando Flask en http://0.0.0.0:%d (disponible ya)", FLASK_PORT)
     try:
         app.run(host="0.0.0.0", port=FLASK_PORT, debug=False, use_reloader=False)
     finally:
