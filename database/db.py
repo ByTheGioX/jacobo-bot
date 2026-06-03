@@ -201,6 +201,35 @@ class Database:
                 (datetime.utcnow().isoformat(), idealista_id),
             )
 
+    def mark_paused(self, idealista_id: str):
+        """Marca como pausada (no borrada). Conserva wp_post_id para poder reactivar."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE properties SET status='paused', updated_at=? WHERE idealista_id=?",
+                (datetime.utcnow().isoformat(), idealista_id),
+            )
+
+    def mark_active(self, idealista_id: str):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE properties SET status='active', updated_at=? WHERE idealista_id=?",
+                (datetime.utcnow().isoformat(), idealista_id),
+            )
+
+    def get_paused_ids(self) -> set[str]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT idealista_id FROM properties WHERE status='paused'"
+            ).fetchall()
+            return {r["idealista_id"] for r in rows}
+
+    def clear_wp_post_id(self, idealista_id: str):
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE properties SET wp_post_id=NULL WHERE idealista_id=?",
+                (idealista_id,),
+            )
+
     def get_active_properties(self) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(

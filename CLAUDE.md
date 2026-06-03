@@ -259,3 +259,10 @@ Lecciones documentadas de errores reales en producción. Antes de tocar estas á
 ### Descripciones y contenido
 
 **14. AI rewriter conservaba teléfonos y CTAs de contacto.** El prompt original decía "conserva TODOS los datos concretos" → conservaba `607792500`, "WhatsApp", "no dudes en contactar…". Solución: prompt actualizado + `_strip_contact_info` ([wordpress/property_publisher.py](wordpress/property_publisher.py)) que elimina con regex teléfonos/emails/URLs/oraciones-CTA antes Y después del rewrite. **Nunca confiar solo en el AI para sanitizar — siempre regex de seguridad después.**
+
+### Detección de bajas / borrado en WP
+
+**15. Un scrape fallido borraba propiedades válidas de WP (incidente grave).** El monitor detectaba bajas con `removed_ids = known_ids - all_seen_ids`. Si un perfil fallaba al scrapear (rate-limit de Scrapfly, ban, error de red), sus propiedades faltaban en `all_seen_ids` y se interpretaban como "desaparecidas de Idealista". Peor: la baja era un `delete_post(force=True)` = **borrado permanente** (ni a la papelera). Un solo rate-limit borró ~30 propiedades de una agencia. Soluciones:
+  - **Las bajas ahora PAUSAN, no borran.** `_handle_paused` pone el post en `draft` (`publisher.pause`); `_handle_reappeared` lo reactiva a `publish` si la propiedad vuelve a Idealista. Nunca se usa `delete_post` en el ciclo. Ver [monitor/property_monitor.py](monitor/property_monitor.py).
+  - **Un scrape incompleto NUNCA da de baja nada.** `scrape_profile` marca `self.failed_profiles` cuando `_get_soup` devuelve None (fallo de fetch ≠ listing vacío). Si `failed_profiles` no está vacío, el monitor OMITE toda la detección de bajas ese ciclo. Ver [scraper/idealista_scraper.py](scraper/idealista_scraper.py).
+  - **Restaurar borradas sin gastar KIE:** `python -m tools.restore_deleted` (dry-run) → `--apply --limit 10`. Reutiliza `processed_photos` de la BD + cache local `data/photos/<carpeta>/processed/`. Omite las que ya no tienen fotos locales (para esas, ciclo completo).

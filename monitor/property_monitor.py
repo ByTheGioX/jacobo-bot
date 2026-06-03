@@ -58,11 +58,27 @@ class PropertyMonitor:
             stats.found = len(all_seen_ids)
             logger.info("Propiedades en Idealista: %d total (%d nuevas)", stats.found, len(scraped_props))
 
-            # 3. Propiedades eliminadas de Idealista → eliminar de WP
-            removed_ids = known_ids - all_seen_ids
-            for rid in removed_ids:
-                self._handle_removed(rid)
-                stats.removed += 1
+            # 3. Propiedades que ya no aparecen en Idealista → PAUSAR (no borrar) en WP.
+            #    SEGURIDAD: si algún perfil falló al scrapear (rate-limit, ban, error de red),
+            #    sus propiedades faltarían en all_seen_ids y se pausarían por error. En ese caso
+            #    NO tocamos nada — un scrape incompleto jamás debe dar de baja propiedades.
+            if self.scraper.failed_profiles:
+                logger.warning(
+                    "[SEGURIDAD] %d perfil(es) fallaron al scrapear (%s). "
+                    "Se OMITE la detección de bajas para no pausar propiedades por error.",
+                    len(self.scraper.failed_profiles),
+                    ", ".join(self.scraper.failed_profiles),
+                )
+            else:
+                gone_ids = known_ids - all_seen_ids
+                for rid in gone_ids:
+                    self._handle_paused(rid)
+                    stats.removed += 1
+
+            # 3b. Propiedades pausadas que VUELVEN a aparecer → reactivar (borrador → publicada)
+            reappeared = self.db.get_paused_ids() & all_seen_ids
+            for rid in reappeared:
+                self._handle_reappeared(rid)
 
             # 4. Reintentar propiedades en BD sin wp_post_id (fotos ya procesadas)
             self._retry_unpublished(stats)
@@ -260,12 +276,21 @@ class PropertyMonitor:
             is_floor_plan=[False] * n,
         )
 
-    def _handle_removed(self, idealista_id: str):
+    def _handle_paused(self, idealista_id: str):
+        """Ya no aparece en Idealista → pausa la publicación en WP (borrador). NUNCA la borra."""
         db_prop = self.db.get_property(idealista_id)
         if db_prop and db_prop.get("wp_post_id"):
-            self.publisher.unpublish(db_prop["wp_post_id"])
-        self.db.mark_removed(idealista_id)
-        logger.info(f"[ELIMINADA] {idealista_id} — borrada de WP y marcada como inactiva")
+            self.publisher.pause(db_prop["wp_post_id"])
+        self.db.mark_paused(idealista_id)
+        logger.info(f"[PAUSADA] {idealista_id} — ya no está en Idealista, puesta en borrador en WP")
+
+    def _handle_reappeared(self, idealista_id: str):
+        """Volvió a aparecer en Idealista → reactiva la publicación (borrador → publicada)."""
+        db_prop = self.db.get_property(idealista_id)
+        if db_prop and db_prop.get("wp_post_id"):
+            self.publisher.unpause(db_prop["wp_post_id"])
+        self.db.mark_active(idealista_id)
+        logger.info(f"[REACTIVADA] {idealista_id} — volvió a Idealista, republicada en WP")
 
     @staticmethod
     def _prop_to_dict(prop: Property) -> dict:

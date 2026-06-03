@@ -118,6 +118,7 @@ class IdealistaScraper:
         self._captcha_count = 0
         self._current_ua = random.choice(_USER_AGENTS)
         self.seen_ids: set[str] = set()  # todos los IDs vistos en listings (incluye conocidas)
+        self.failed_profiles: list[str] = []  # perfiles que fallaron al scrapear (no usar para detectar bajas)
 
     def _sleep(self, lo: float = None, hi: float = None):
         t = random.uniform(lo or self.delay_range[0], hi or self.delay_range[1])
@@ -429,11 +430,18 @@ class IdealistaScraper:
         known_ids = known_ids or set()
         logger.info("Scrapeando perfil: %s (límite: %s)", profile_url, limit or "sin límite")
         properties: list[Property] = []
+        fetch_failed = False
         page = 1
         while True:
             url = self._profile_page_url(profile_url, page)
             soup = self._get_soup(url)
             if soup is None:
+                # _get_soup solo devuelve None ante un fallo de fetch (rate-limit, ban,
+                # error de red), NUNCA por "no hay más propiedades" (eso da listing vacío).
+                # Marcamos el perfil como fallido para que el monitor NO interprete sus
+                # propiedades como bajas y las pause/borre por error.
+                logger.warning("Fetch falló en %s (página %d) — perfil marcado como fallido", profile_url, page)
+                fetch_failed = True
                 break
             item_urls = self._parse_listing_page(soup)
             if not item_urls:
@@ -471,6 +479,9 @@ class IdealistaScraper:
                     else:
                         p.photo_urls, p.is_floor_plan, p.photo_labels = [], [], []
 
+        if fetch_failed:
+            self.failed_profiles.append(profile_url)
+
         return properties
 
     def scrape_all_profiles(self, known_ids: set[str] = None) -> list[Property]:
@@ -483,6 +494,7 @@ class IdealistaScraper:
             logger.info("Modo %s activo — sin navegador, sin captchas", backend)
             self.delay_range = (2.0, 5.0)
             self.seen_ids.clear()
+            self.failed_profiles.clear()
             all_props: list[Property] = []
             for url in IDEALISTA_PROFILE_URLS:
                 logger.info("--- Perfil: %s ---", url)
@@ -491,6 +503,7 @@ class IdealistaScraper:
             return all_props
 
         self.seen_ids.clear()
+        self.failed_profiles.clear()
         self._clear_session()
         self._start_browser()
         try:

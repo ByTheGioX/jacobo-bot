@@ -280,6 +280,22 @@ class PropertyPublisher:
         except Exception as e:
             logger.error("Error eliminando post WP %s: %s", wp_post_id, e)
 
+    def pause(self, wp_post_id: int):
+        """Pausa la propiedad poniéndola en borrador (NO la borra). Reversible con unpause()."""
+        try:
+            self.wp.update_post(WP_PROPERTY_REST_BASE, wp_post_id, {"status": "draft"})
+            logger.info("Propiedad WP ID %s pausada (borrador).", wp_post_id)
+        except Exception as e:
+            logger.error("Error pausando post WP %s: %s", wp_post_id, e)
+
+    def unpause(self, wp_post_id: int):
+        """Reactiva una propiedad pausada (borrador → publicada)."""
+        try:
+            self.wp.update_post(WP_PROPERTY_REST_BASE, wp_post_id, {"status": "publish"})
+            logger.info("Propiedad WP ID %s reactivada (publicada).", wp_post_id)
+        except Exception as e:
+            logger.error("Error reactivando post WP %s: %s", wp_post_id, e)
+
     def _upload_photos(self, internal_ref: str, processed_photos: list[dict]) -> list[int]:
         media_ids = []
         for idx, photo in enumerate(processed_photos):
