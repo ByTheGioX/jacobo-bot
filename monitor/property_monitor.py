@@ -71,9 +71,23 @@ class PropertyMonitor:
                 )
             else:
                 gone_ids = known_ids - all_seen_ids
-                for rid in gone_ids:
-                    self._handle_paused(rid)
-                    stats.removed += 1
+                # SEGURIDAD 2 (red de protección): un perfil puede devolver 200 + HTML
+                # válido pero con listing incompleto (soft-block, paginación rota) sin
+                # marcarse como failed_profile. Si eso pasara, se pausarían en masa
+                # propiedades reales. Una agencia casi nunca da de baja >50% de su stock
+                # en un solo ciclo (72h): si gone_ids supera ese umbral, es casi seguro
+                # un fallo de scrape, no la realidad → OMITIMOS las bajas este ciclo.
+                if known_ids and len(gone_ids) > len(known_ids) * 0.5:
+                    logger.warning(
+                        "[SEGURIDAD] El scrape marcaría %d/%d propiedades como bajas (>50%%). "
+                        "Esto es casi seguro un fallo de scrape, no bajas reales. "
+                        "Se OMITE la detección de bajas este ciclo.",
+                        len(gone_ids), len(known_ids),
+                    )
+                else:
+                    for rid in gone_ids:
+                        self._handle_paused(rid)
+                        stats.removed += 1
 
             # 3b. Propiedades pausadas que VUELVEN a aparecer → reactivar (borrador → publicada)
             reappeared = self.db.get_paused_ids() & all_seen_ids

@@ -445,7 +445,22 @@ class IdealistaScraper:
                 break
             item_urls = self._parse_listing_page(soup)
             if not item_urls:
-                logger.info("Sin mas propiedades en pagina %d. Total: %d", page, len(properties))
+                if page == 1:
+                    # Página 1 sin NINGUNA propiedad = soft-block o cambio de markup,
+                    # NO una agencia vacía. Un perfil real SIEMPRE lista inmuebles.
+                    # El fetch puede devolver 200 + HTML >5000 chars que no es un captcha
+                    # reconocido (bloqueo blando de Scrapfly/DataDome), así que _get_soup
+                    # no devuelve None y el blindaje de failed_profiles no se activaría.
+                    # Lo marcamos como fallo para que el monitor NO pause/borre estas
+                    # propiedades por error (mismo blindaje que un fetch fallido).
+                    logger.warning(
+                        "Perfil %s devolvió 0 propiedades en página 1 — probable soft-block/cambio de markup. "
+                        "Marcado como fallido (no se usará para detectar bajas).",
+                        profile_url,
+                    )
+                    fetch_failed = True
+                else:
+                    logger.info("Sin mas propiedades en pagina %d. Total: %d", page, len(properties))
                 break
             if limit:
                 remaining = limit - len(properties)
