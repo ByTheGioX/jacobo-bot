@@ -984,11 +984,12 @@ def scrape_photo_group():
                             # Supera el límite máximo → marcar como procesada definitivamente
                             new_processed.add(msg_id)
                             continue
-                        if age < datetime.timedelta(hours=-24):
-                            # Más de 24h en el futuro → saltar sin marcar (dato inválido)
+                        if age < datetime.timedelta(0):
+                            # Timestamp futuro (desfase de reloj): saltar sin marcar
                             continue
-                        # Si age es ligeramente negativa (≤ 24h), el reloj del VPS puede estar
-                        # atrasado respecto al teléfono → procesar igualmente
+                    else:
+                        # Timestamp ilegible: saltar sin marcar para reintentar
+                        continue
 
                 msg_text = msg.get_attribute('innerText') or msg.text or ''
 
