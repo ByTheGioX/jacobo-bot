@@ -130,9 +130,15 @@ class PropertyPublisher:
             "fave_property_map_address":  prop.location or "",
             "fave_property_map_zoom":     "14",
             "fave_property_content":      excerpt,
-            # Habilitar visibilidad en listings de Houzez por defecto
+            # Habilitar visibilidad en listings de Houzez por defecto.
+            # OJO: fave_featured es OBLIGATORIO — el orden "destacadas primero"
+            # hace INNER JOIN sobre ese meta y excluye posts que no lo tienen.
             "fave_featured":              "0",
             "fave_property_country":      "ES",
+            # Houzez los escribe al guardar desde admin; sin ellos el post puede
+            # quedar fuera de listados si el tema activa filtros de expiración
+            "_houzez_expiration_date_status": "saved",
+            "houzez_manual_expire":           "0",
         }
         if prop.area_m2:
             meta["fave_property_size"]        = str(int(prop.area_m2))

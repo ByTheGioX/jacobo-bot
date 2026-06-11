@@ -30,6 +30,7 @@ _REQUIRED_METAS = [
     "fave_property_price",
     "fave_property_id",
     "fave_property_type",
+    "fave_featured",          # el orden "destacadas primero" hace INNER JOIN: sin este meta el post NO sale en listados
 ]
 
 # Slugs válidos en sitio español. Los slugs ingleses (for-sale/for-rent) NO
