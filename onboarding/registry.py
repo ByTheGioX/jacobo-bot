@@ -16,6 +16,7 @@ import random
 import re
 import string
 from pathlib import Path
+from urllib.parse import urlparse
 
 import config.settings as settings
 
@@ -23,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 _PROFILES_PATH = Path(__file__).parent.parent / "configuracion" / "perfiles.txt"
 _SLUG_RE = re.compile(r"/pro/([^/]+)/?")
+
+# Hosts exactos permitidos (sin comodines ni substrings: evita bypass tipo
+# idealista.com.evil.com o evil.com/?idealista.). Es la frontera anti-SSRF:
+# la URL validada se acaba fetcheando por el scraper al aprobar el alta.
+_ALLOWED_HOSTS = {"idealista.com", "www.idealista.com"}
+_PROFILE_PATH_RE = re.compile(r"/pro/[A-Za-z0-9._-]+/?$")
 
 
 def extract_slug(url: str) -> str:
@@ -34,15 +41,29 @@ def extract_slug(url: str) -> str:
 def validate_idealista_profile_url(url: str) -> bool:
     """True solo si es una URL de perfil profesional de Idealista con slug.
 
-    Acepta: https://www.idealista.com/pro/<slug>/  (con o sin www, con o sin barra final).
-    Rechaza cualquier otra cosa (evita quemar créditos KIE con URLs basura).
+    Validación estricta (frontera anti-SSRF — el formulario es público y la URL
+    aprobada se fetchea): esquema http(s), host EXACTO idealista.com/www.idealista.com
+    (no substring), sin user:pass, puerto por defecto, y path anclado /pro/<slug>/.
     """
     url = (url or "").strip()
     if not url:
         return False
-    if "idealista." not in url.lower():
+    try:
+        p = urlparse(url)
+    except ValueError:
         return False
-    return bool(extract_slug(url))
+    if p.scheme not in ("http", "https"):
+        return False
+    if p.username or p.password:
+        return False
+    if (p.hostname or "").rstrip(".").lower() not in _ALLOWED_HOSTS:
+        return False
+    try:
+        if p.port not in (None, 80, 443):
+            return False
+    except ValueError:
+        return False
+    return bool(_PROFILE_PATH_RE.match(p.path or ""))
 
 
 def _existing_codes() -> set[str]:
