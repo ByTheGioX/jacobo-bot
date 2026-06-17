@@ -89,8 +89,25 @@ function jacobo_agencies_render_page(): void {
         } elseif ($action === 'delete_agency') {
             jacobo_api_call('DELETE', '/api/agencies/' . intval($_POST['agency_id'] ?? 0));
             $notice = '🗑️ Agencia eliminada.';
+
+        } elseif ($action === 'approve_signup') {
+            $result = jacobo_api_call('POST', '/api/signups/' . intval($_POST['signup_id'] ?? 0) . '/approve');
+            if (isset($result['error'])) {
+                $notice = '❌ Error: ' . esc_html($result['error']);
+                $notice_type = 'error';
+            } else {
+                $notice = '✅ Alta aprobada. Código: <strong>' . esc_html($result['code'] ?? '—')
+                        . '</strong>. El perfil se está scrapeando y publicando en segundo plano.';
+            }
+
+        } elseif ($action === 'reject_signup') {
+            jacobo_api_call('POST', '/api/signups/' . intval($_POST['signup_id'] ?? 0) . '/reject');
+            $notice = '🗑️ Solicitud rechazada.';
         }
     }
+
+    $signups = jacobo_api_call('GET', '/api/signups?status=pending');
+    if (isset($signups['error'])) { $signups = []; }
 
     $agencies  = jacobo_api_call('GET', '/api/agencies');
     $api_error = $agencies['error'] ?? null;
@@ -137,6 +154,57 @@ function jacobo_agencies_render_page(): void {
             </table>
             <p class="submit"><input type="submit" class="button button-primary" value="Guardar configuración"></p>
         </form>
+
+        <h2>📨 Solicitudes de alta pendientes <?= !empty($signups) ? '(' . count($signups) . ')' : '' ?></h2>
+        <p class="description">Agencias que se han registrado desde la web y esperan tu aprobación.
+        Al aprobar se genera su código y se scrapea/publica su perfil automáticamente.</p>
+        <?php if (empty($signups)): ?>
+            <p style="color:#666">No hay solicitudes pendientes.</p>
+        <?php else: ?>
+        <table class="wp-list-table widefat fixed striped">
+            <thead>
+                <tr>
+                    <th style="width:40px">ID</th><th>Nombre</th><th>Contacto</th>
+                    <th>Perfil Idealista</th><th>Zonas</th><th style="width:140px">Fecha</th>
+                    <th style="width:170px">Acción</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($signups as $s):
+                $zones_raw = $s['zones'] ?? '';
+                $decoded   = json_decode((string) $zones_raw, true);
+                $zones_str = is_array($decoded) ? implode(', ', $decoded) : (string) $zones_raw;
+                $zones_display = $zones_str !== '' ? esc_html($zones_str) : '<em style="color:#999">Todas</em>';
+                $contact = trim(($s['contact_email'] ?? '') . ' ' . ($s['phone'] ?? ''));
+            ?>
+            <tr>
+                <td><?= intval($s['id']) ?></td>
+                <td><strong><?= esc_html($s['name']) ?></strong></td>
+                <td><?= esc_html($contact !== '' ? $contact : '—') ?></td>
+                <td><a href="<?= esc_url($s['idealista_url']) ?>" target="_blank" rel="noopener">ver perfil ↗</a></td>
+                <td><?= wp_kses_post($zones_display) ?></td>
+                <td><?= esc_html(substr((string) ($s['created_at'] ?? ''), 0, 16)) ?></td>
+                <td>
+                    <form method="post" style="display:inline"
+                          onsubmit="return confirm('¿Aprobar y scrapear «<?= esc_js($s['name']) ?>»? Esto gasta créditos KIE.')">
+                        <?php wp_nonce_field('jacobo_nonce'); ?>
+                        <input type="hidden" name="jacobo_action" value="approve_signup">
+                        <input type="hidden" name="signup_id" value="<?= intval($s['id']) ?>">
+                        <button type="submit" class="button button-primary button-small">Aprobar</button>
+                    </form>
+                    <form method="post" style="display:inline"
+                          onsubmit="return confirm('¿Rechazar «<?= esc_js($s['name']) ?>»?')">
+                        <?php wp_nonce_field('jacobo_nonce'); ?>
+                        <input type="hidden" name="jacobo_action" value="reject_signup">
+                        <input type="hidden" name="signup_id" value="<?= intval($s['id']) ?>">
+                        <button type="submit" class="button button-small button-link-delete">Rechazar</button>
+                    </form>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        <?php endif; ?>
 
         <h2>📋 Agencias registradas</h2>
         <?php if (empty($agencies) && !$api_error): ?>

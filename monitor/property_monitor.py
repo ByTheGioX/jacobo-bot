@@ -8,6 +8,7 @@ Monitor de propiedades: ejecuta el ciclo completo cada 24h.
 
 import logging
 import re
+import threading
 from dataclasses import dataclass
 
 from scraper.idealista_scraper import IdealistaScraper, Property
@@ -20,6 +21,10 @@ from monitor.processing_report import CycleReporter, PropertyReport
 from config.settings import SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX, SKIP_WORDPRESS
 
 logger = logging.getLogger(__name__)
+
+# Lock compartido: garantiza que el ciclo programado (run) y un alta de agencia
+# (run_single_profile) nunca corran scraper + KIE + WP a la vez.
+_RUN_LOCK = threading.Lock()
 
 
 @dataclass
@@ -40,6 +45,9 @@ class PropertyMonitor:
 
     def run(self) -> RunStats:
         """Ejecuta un ciclo completo de monitoreo."""
+        if not _RUN_LOCK.acquire(blocking=False):
+            logger.info("[LOCK] Otro scrape en curso — el ciclo espera a que termine...")
+            _RUN_LOCK.acquire()
         stats = RunStats()
         run_id = self.db.start_scrape_run()
         self.reporter = CycleReporter()
@@ -170,7 +178,75 @@ class PropertyMonitor:
                 self.reporter.flush()
             except Exception as e:
                 logger.error("Error volcando reporte de ciclo: %s", e)
+            _RUN_LOCK.release()
 
+        return stats
+
+    def run_single_profile(self, profile_url: str) -> RunStats:
+        """Scrapea y publica UN solo perfil (alta de agencia). NO detecta bajas.
+
+        Usa el mismo camino KIE → optimizar → Houzez que el ciclo normal, así se
+        respeta la política anti-copyright. Comparte _RUN_LOCK con run() para no
+        solaparse con el ciclo programado de 72h. Asume backend Scrapfly/Scrape.do
+        (la config de producción), que no necesita navegador.
+        """
+        if not _RUN_LOCK.acquire(blocking=False):
+            logger.info("[LOCK] Ciclo en curso — el alta de %s espera a que termine...", profile_url)
+            _RUN_LOCK.acquire()
+        stats = RunStats()
+        self.reporter = CycleReporter()
+        self.scraper.seen_ids.clear()
+        self.scraper.failed_profiles.clear()
+        try:
+            logger.info("=== Alta de perfil: %s ===", profile_url)
+            known_ids = self.db.get_active_ids()
+            scraped_props = self.scraper.scrape_profile(profile_url, known_ids=known_ids)
+
+            if self.scraper.failed_profiles:
+                logger.warning("[ALTA] El scrape del perfil %s falló — nada que publicar.", profile_url)
+                return stats
+
+            stats.found = len(scraped_props)
+            for prop in scraped_props:
+                try:
+                    is_new, was_updated = self.db.upsert_property(self._prop_to_dict(prop))
+                    db_prop = self.db.get_property(prop.idealista_id)
+                    needs_publish = is_new or was_updated or (db_prop and not db_prop.get("wp_post_id"))
+                    if not needs_publish:
+                        logger.debug("[ALTA SIN CAMBIOS] %s", prop.idealista_id)
+                        continue
+                    rep = self.reporter.new_property(prop.idealista_id, prop.title, prop.url)
+                    rep.photos_scraped = len(prop.photo_urls)
+                    self._process_and_publish(prop, rep, update=bool(was_updated))
+                    if was_updated:
+                        stats.updated += 1
+                    else:
+                        stats.new += 1
+                except (KieAiNoCreditsError, OpenRouterNoCreditsError) as e:
+                    logger.critical("=== ALTA DETENIDA: API SIN CRÉDITOS === %s", e)
+                    stats.errors += 1
+                    raise
+                except Exception as e:
+                    logger.error("Error publicando %s en alta: %s", prop.idealista_id, e)
+                    stats.errors += 1
+
+            logger.info(
+                "=== Alta finalizada === Nuevas: %d | Actualizadas: %d | Errores: %d",
+                stats.new, stats.updated, stats.errors,
+            )
+            if stats.new or stats.updated:
+                try:
+                    self.publisher.wp.purge_all_cache()
+                except Exception as e:
+                    logger.warning("Purge de cache falló (no crítico): %s", e)
+        except Exception as e:
+            logger.error("Error crítico en alta de perfil %s: %s", profile_url, e)
+        finally:
+            try:
+                self.reporter.flush()
+            except Exception as e:
+                logger.error("Error volcando reporte de alta: %s", e)
+            _RUN_LOCK.release()
         return stats
 
     # ------------------------------------------------------------------

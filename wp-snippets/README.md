@@ -20,3 +20,51 @@ Conecta el formulario de búsqueda de Contact Form 7 con el bot Python.
 ### Firewall (Contabo)
 
 Abrir el puerto **8080 TCP** en el panel de Contabo → Firewall para que WordPress pueda llegar al VPS.
+
+---
+
+## home-search-box.php  (cajita de IA en el Home)
+
+Alternativa autocontenida al formulario de CF7: una "ventana de IA" (estilo costasunsets)
+que el visitante usa para describir lo que busca. **No necesita Contact Form 7.**
+
+### Instalación
+
+1. Activar el plugin **Jacobo Agency Manager** y configurar URL + secret de la API.
+2. Pegar el contenido de `home-search-box.php` al final del `functions.php` del tema hijo.
+3. En el editor del Home, insertar el shortcode `[jacobo_search_box]` (bloque "Shortcode").
+   - Opcional: personalizar textos → `[jacobo_search_box titulo="..." subtitulo="..." placeholder="..."]`
+
+El envío llama a `POST /api/search` desde el servidor (la secret nunca llega al navegador).
+Si no hay coincidencias en el inventario, el bot avisa por email a las agencias de la zona.
+
+---
+
+## agency-onboarding-form.php  (alta automática de agencias)
+
+Formulario público donde una agencia se da de alta sola. Al enviar, queda **pendiente de
+tu aprobación**; cuando la apruebas (Ajustes → Agencias Colaboradoras → "Solicitudes de
+alta pendientes"), el bot genera su código corto, la añade a `perfiles.txt`, y scrapea y
+publica su perfil automáticamente.
+
+### Instalación
+
+1. Activar el plugin **Jacobo Agency Manager** y configurar URL + secret de la API.
+2. Pegar el contenido de `agency-onboarding-form.php` al final del `functions.php` del tema hijo.
+3. Crear una página (ej. **"Únete a la red"**) e insertar el shortcode `[jacobo_onboarding_form]`.
+4. Esa URL es la que mandas por email a tu listado de agencias. Para enviarla en masa:
+   ```
+   python -m tools.send_onboarding_invites --link "https://TUWEB.com/unete"            # dry-run
+   python -m tools.send_onboarding_invites --link "https://TUWEB.com/unete" --apply     # envía
+   ```
+
+### Flujo completo
+
+```
+Agencia → página "Únete a la red" → POST /api/onboard → solicitud "pendiente"
+Tú → WP Admin → Agencias Colaboradoras → "Aprobar" → POST /api/signups/<id>/approve
+   → código generado + perfiles.txt + scrape + publicación automática
+```
+
+**Aprobación manual a propósito:** scrapear+publicar gasta créditos KIE; un formulario público
+sin filtro sería un vector de abuso. Por eso cada alta espera tu visto bueno.

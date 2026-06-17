@@ -15,6 +15,8 @@ import logging
 import threading
 from flask import Flask, abort, jsonify, request, Response
 
+from onboarding.registry import validate_idealista_profile_url, register_agency_profile
+
 logger = logging.getLogger(__name__)
 
 _SECRET: str = ""
@@ -85,6 +87,79 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
         Database().delete_agency(agency_id)
         return jsonify({"deleted": agency_id})
 
+    # ── Alta automática de agencias ──────────────────────────────
+    @app.route("/api/onboard", methods=["POST"])
+    def onboard():
+        """Recibe una solicitud de alta desde el formulario público de WordPress.
+        Guarda como 'pending' — NO scrapea hasta que el admin apruebe."""
+        _require_secret()
+        data = request.get_json(force=True, silent=True) or {}
+        name = (data.get("name") or "").strip()
+        url  = (data.get("idealista_url") or "").strip()
+        if not name:
+            return jsonify({"error": "nombre requerido"}), 400
+        if not validate_idealista_profile_url(url):
+            return jsonify({"error": "URL de perfil de Idealista no válida (debe ser idealista.com/pro/...)"}), 400
+        zones = data.get("zones") or []
+        if isinstance(zones, str):
+            zones = [z.strip() for z in zones.split(",") if z.strip()]
+        from database.db import Database
+        db = Database()
+        if db.signup_url_exists(url):
+            return jsonify({"status": "duplicate", "message": "Ese perfil ya está registrado o pendiente"}), 200
+        signup_id = db.add_signup(
+            name=name,
+            idealista_url=url,
+            contact_email=(data.get("email") or "").strip(),
+            phone=(data.get("phone") or "").strip(),
+            zones=zones if isinstance(zones, list) else [],
+        )
+        logger.info("Nueva solicitud de alta #%s: %s (%s)", signup_id, name, url)
+        return jsonify({"status": "received", "id": signup_id}), 201
+
+    @app.route("/api/signups", methods=["GET"])
+    def list_signups():
+        _require_secret()
+        from database.db import Database
+        status = request.args.get("status") or None
+        return jsonify(Database().list_signups(status))
+
+    @app.route("/api/signups/<int:signup_id>/approve", methods=["POST"])
+    def approve_signup(signup_id: int):
+        _require_secret()
+        from database.db import Database
+        db = Database()
+        signup = db.get_signup(signup_id)
+        if not signup:
+            return jsonify({"error": "solicitud no encontrada"}), 404
+        if signup["status"] == "approved":
+            return jsonify({"status": "already_approved", "code": signup.get("agency_code")}), 200
+        url = signup["idealista_url"]
+        if not validate_idealista_profile_url(url):
+            return jsonify({"error": "la URL guardada no es válida"}), 400
+        try:
+            zones = json.loads(signup.get("zones") or "[]")
+        except Exception:
+            zones = []
+        code = register_agency_profile(signup["name"], url)
+        db.set_signup_status(signup_id, "approved", agency_code=code)
+        # También se registra como agencia colaboradora (para recibir búsquedas por zona)
+        if signup.get("contact_email"):
+            db.add_agency(signup["name"], signup["contact_email"], zones)
+        threading.Thread(target=_scrape_single_async, args=(url,), daemon=True).start()
+        logger.info("Alta #%s aprobada → código %s, scrape en marcha", signup_id, code)
+        return jsonify({"status": "approved", "code": code}), 202
+
+    @app.route("/api/signups/<int:signup_id>/reject", methods=["POST"])
+    def reject_signup(signup_id: int):
+        _require_secret()
+        from database.db import Database
+        db = Database()
+        if not db.get_signup(signup_id):
+            return jsonify({"error": "solicitud no encontrada"}), 404
+        db.set_signup_status(signup_id, "rejected")
+        return jsonify({"status": "rejected", "id": signup_id})
+
     return app
 
 
@@ -132,6 +207,16 @@ def _process_search_async(query: str, name: str, email: str):
             logger.info("Búsqueda '%s' → %d coincidencias en DB", query[:50], len(result["matches"]))
     except Exception:
         logger.exception("Error procesando búsqueda async: '%s'", query[:50])
+
+
+def _scrape_single_async(profile_url: str):
+    """Scrapea y publica el perfil recién aprobado, en background (no bloquea la API)."""
+    try:
+        from monitor.property_monitor import PropertyMonitor
+        stats = PropertyMonitor().run_single_profile(profile_url)
+        logger.info("Alta de %s completada: %s", profile_url, stats)
+    except Exception:
+        logger.exception("Error en scrape de alta: %s", profile_url)
 
 
 def _render_dashboard_html(stats: dict, searches: list) -> str:

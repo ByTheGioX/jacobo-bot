@@ -65,6 +65,20 @@ CREATE TABLE IF NOT EXISTS collaborating_agencies (
     added_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS agency_signups (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    contact_email   TEXT,
+    phone           TEXT,
+    idealista_url   TEXT NOT NULL,
+    zones           TEXT,                  -- JSON array (zonas o códigos postales)
+    status          TEXT DEFAULT 'pending',-- pending | approved | rejected
+    agency_code     TEXT,                  -- se rellena al aprobar
+    note            TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    decided_at      TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS scrape_runs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -331,6 +345,73 @@ class Database:
                 "SELECT * FROM collaborating_agencies ORDER BY id"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Agency signups (alta automática de agencias)
+    # ------------------------------------------------------------------
+
+    def add_signup(
+        self,
+        name: str,
+        idealista_url: str,
+        contact_email: str = "",
+        phone: str = "",
+        zones: Optional[list] = None,
+    ) -> int:
+        zones_json = json.dumps(zones) if zones else "[]"
+        with self._conn() as conn:
+            cur = conn.execute(
+                """INSERT INTO agency_signups
+                   (name, contact_email, phone, idealista_url, zones, status)
+                   VALUES (?,?,?,?,?,'pending')""",
+                (name, contact_email, phone, idealista_url, zones_json),
+            )
+            return cur.lastrowid
+
+    def get_signup(self, signup_id: int) -> Optional[dict]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM agency_signups WHERE id=?", (signup_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_signups(self, status: Optional[str] = None) -> list[dict]:
+        with self._conn() as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM agency_signups WHERE status=? ORDER BY id DESC",
+                    (status,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM agency_signups ORDER BY id DESC"
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def set_signup_status(
+        self,
+        signup_id: int,
+        status: str,
+        agency_code: Optional[str] = None,
+        note: Optional[str] = None,
+    ):
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE agency_signups
+                   SET status=?, agency_code=COALESCE(?, agency_code),
+                       note=COALESCE(?, note), decided_at=?
+                   WHERE id=?""",
+                (status, agency_code, note, datetime.utcnow().isoformat(), signup_id),
+            )
+
+    def signup_url_exists(self, idealista_url: str) -> bool:
+        """True si ya hay una solicitud no rechazada con esa misma URL (evita duplicados)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM agency_signups WHERE idealista_url=? AND status!='rejected' LIMIT 1",
+                (idealista_url,),
+            ).fetchone()
+            return row is not None
 
     # ------------------------------------------------------------------
     # Scrape runs
