@@ -143,7 +143,11 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
             zones = json.loads(signup.get("zones") or "[]")
         except Exception:
             zones = []
-        code = register_agency_profile(signup["name"], url)
+        try:
+            code = register_agency_profile(signup["name"], url)
+        except Exception:
+            logger.exception("Error registrando el perfil de la solicitud #%s", signup_id)
+            return jsonify({"error": "no se pudo registrar el perfil (revisa los logs del servidor)"}), 500
         db.set_signup_status(signup_id, "approved", agency_code=code)
         # También se registra como agencia colaboradora (para recibir búsquedas por zona)
         if signup.get("contact_email"):
