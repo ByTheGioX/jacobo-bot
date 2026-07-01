@@ -17,6 +17,9 @@
 
 defined('ABSPATH') || exit;
 
+// Guard: si el plugin Jacobo Agency Manager ya registra este shortcode, no lo dupliques.
+if (!function_exists('jacobo_search_box_render')) {
+
 add_shortcode('jacobo_search_box', 'jacobo_search_box_render');
 
 function jacobo_search_box_render(array $atts = []): string {
@@ -110,3 +113,5 @@ function jacobo_search_box_render(array $atts = []): string {
     <?php
     return ob_get_clean();
 }
+
+} // fin guard function_exists

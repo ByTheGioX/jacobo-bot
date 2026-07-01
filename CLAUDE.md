@@ -104,6 +104,9 @@ python main.py --dashboard
    - **Verificar fotos crudas en WP (dry-run):** `python -m tools.verify_uploaded`
    - **Verificar y reprocesar automáticamente:** `python -m tools.verify_uploaded --reprocess`
    - **Purgar cache de WP (si la web no muestra cambios):** `python -m tools.purge_cache`
+   - **Invitar agencias a darse de alta (dry-run):** `python -m tools.send_onboarding_invites --link "https://tuweb.com/unete"`
+   - **Invitar agencias (envío real):** `python -m tools.send_onboarding_invites --link "https://tuweb.com/unete" --apply`
+   - **Tests del alta de agencias:** `python test_onboarding.py`
 4. No cerrar la ventana negra mientras se ejecuta
 
 ### Desarrollo
@@ -181,6 +184,14 @@ Las propiedades se publican como tipo de post `property` de Houzez. Los campos s
 ### Búsqueda en Lenguaje Natural
 
 Si `ANTHROPIC_API_KEY` está configurada, las consultas de compradores usan Claude para coincidencia semántica (extracción de rango de precio, ubicación, tipo de propiedad). Si no, se usa fallback basado en regex. Las búsquedas no coincidentes se reenvían a agencias colaboradoras por email.
+
+### Alta automática de agencias (self-onboarding)
+
+Las inmobiliarias se registran solas desde la web y, tras aprobación manual, sus pisos se publican solos. Flujo: formulario WP (`[jacobo_onboarding_form]`) → `POST /api/onboard` (queda `pending` en tabla `agency_signups`) → admin aprueba en el plugin → `POST /api/signups/<id>/approve` → [onboarding/registry.py](onboarding/registry.py) genera código corto único (estilo `3VCO`, no revela la agencia — ver incidente 8), lo añade a `configuracion/perfiles.txt` y muta `AGENCY_CODES`/`IDEALISTA_PROFILE_URLS` en memoria → `PropertyMonitor.run_single_profile(url)` scrapea+publica ese perfil (sin detección de bajas). Guía de despliegue: `GUIA_ALTA_AGENCIAS.md`.
+
+- **Aprobación manual a propósito:** el formulario es público; scrapear+publicar gasta KIE. Sin la aprobación sería un vector de abuso/coste. Guarda de seguridad anti-SSRF en `validate_idealista_profile_url` (host exacto `idealista.com`, path anclado `/pro/<slug>/`) — la URL aprobada se acaba fetcheando.
+- **Anti-solape:** `_RUN_LOCK` en [monitor/property_monitor.py](monitor/property_monitor.py) impide que el alta y el ciclo de 72h corran scraper+KIE+WP a la vez.
+- **Shortcodes:** el plugin `wp-plugin/jacobo-agency-manager/` (v1.1.0+) ya incluye `[jacobo_search_box]` (cajita IA del Home) y `[jacobo_onboarding_form]` — no hace falta editar `functions.php`. Los `.php` de `wp-snippets/` son alternativa (con guardas `function_exists`).
 
 ## Debug
 

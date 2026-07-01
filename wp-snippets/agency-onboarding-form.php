@@ -18,6 +18,9 @@
 
 defined('ABSPATH') || exit;
 
+// Guard: si el plugin Jacobo Agency Manager ya registra este shortcode, no lo dupliques.
+if (!function_exists('jacobo_onboarding_form_render')) {
+
 add_shortcode('jacobo_onboarding_form', 'jacobo_onboarding_form_render');
 
 function jacobo_onboarding_form_render(): string {
@@ -130,3 +133,5 @@ function jacobo_onboarding_form_render(): string {
     <?php
     return ob_get_clean();
 }
+
+} // fin guard function_exists

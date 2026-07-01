@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:  Jacobo Agency Manager
- * Description:  Gestiona las agencias colaboradoras de Jacobo-Bot desde el admin de WordPress.
- * Version:      1.0.0
+ * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
+ * Version:      1.1.0
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -272,4 +272,173 @@ function jacobo_agencies_render_page(): void {
         </form>
     </div>
     <?php
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  Shortcodes públicos (front-end)
+//  Incluidos en el plugin para no tener que editar functions.php.
+//  Guardados con function_exists por si además existe el snippet suelto.
+// ─────────────────────────────────────────────────────────────
+
+if (!function_exists('jacobo_onboarding_form_render')) {
+    add_shortcode('jacobo_onboarding_form', 'jacobo_onboarding_form_render');
+
+    function jacobo_onboarding_form_render(): string {
+        $msg = '';
+        $msg_ok = true;
+
+        if (($_POST['jacobo_onboard_submit'] ?? '') === '1'
+            && isset($_POST['jacobo_onboard_nonce'])
+            && wp_verify_nonce($_POST['jacobo_onboard_nonce'], 'jacobo_onboard')) {
+
+            $name  = sanitize_text_field($_POST['name']  ?? '');
+            $email = sanitize_email($_POST['email']      ?? '');
+            $phone = sanitize_text_field($_POST['phone'] ?? '');
+            $url   = esc_url_raw($_POST['idealista_url'] ?? '');
+            $zones = sanitize_text_field($_POST['zones'] ?? '');
+
+            if ($name === '' || $url === '') {
+                $msg = 'Por favor, indica al menos el nombre y la URL de tu perfil de Idealista.';
+                $msg_ok = false;
+            } elseif (jacobo_api_url() === '') {
+                error_log('[jacobo-bot] jacobo_api_url no configurada (alta de agencia).');
+                $msg = 'No podemos procesar el alta ahora mismo. Inténtalo más tarde.';
+                $msg_ok = false;
+            } else {
+                $resp = wp_remote_post(jacobo_api_url() . '/api/onboard', [
+                    'timeout' => 15,
+                    'headers' => [
+                        'X-API-Secret' => jacobo_api_secret(),
+                        'Content-Type' => 'application/json',
+                    ],
+                    'body' => wp_json_encode([
+                        'name'          => $name,
+                        'email'         => $email,
+                        'phone'         => $phone,
+                        'idealista_url' => $url,
+                        'zones'         => $zones,
+                    ]),
+                ]);
+                if (is_wp_error($resp)) {
+                    $msg = 'No hemos podido enviar tu solicitud. Inténtalo de nuevo en unos minutos.';
+                    $msg_ok = false;
+                } else {
+                    $code = wp_remote_retrieve_response_code($resp);
+                    $body = json_decode(wp_remote_retrieve_body($resp), true);
+                    if ($code === 201) {
+                        $msg = '¡Gracias! Hemos recibido tu solicitud. La revisaremos y, una vez aprobada, '
+                             . 'tus propiedades aparecerán automáticamente en la web.';
+                    } elseif ($code === 200 && ($body['status'] ?? '') === 'duplicate') {
+                        $msg = 'Tu perfil ya estaba registrado o pendiente de revisión. No hace falta enviarlo otra vez.';
+                    } else {
+                        $msg = esc_html($body['error'] ?? 'No hemos podido procesar tu solicitud. Revisa la URL de Idealista.');
+                        $msg_ok = false;
+                    }
+                }
+            }
+        }
+
+        ob_start();
+        ?>
+        <div class="jacobo-onboard" style="max-width:560px;margin:0 auto;font-family:inherit">
+            <?php if ($msg !== ''): ?>
+                <div style="padding:14px 18px;border-radius:8px;margin-bottom:18px;
+                            background:<?= $msg_ok ? '#e6fffa' : '#fff5f5' ?>;
+                            border:1px solid <?= $msg_ok ? '#38b2ac' : '#fc8181' ?>;
+                            color:<?= $msg_ok ? '#234e52' : '#822727' ?>"><?= $msg ?></div>
+            <?php endif; ?>
+            <?php if (!($msg_ok && $msg !== '')): ?>
+            <form method="post">
+                <?php wp_nonce_field('jacobo_onboard', 'jacobo_onboard_nonce'); ?>
+                <input type="hidden" name="jacobo_onboard_submit" value="1">
+                <label style="display:block;margin:0 0 4px;font-weight:600">Nombre de la inmobiliaria *</label>
+                <input name="name" type="text" required style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <label style="display:block;margin:0 0 4px;font-weight:600">Email de contacto</label>
+                <input name="email" type="email" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <label style="display:block;margin:0 0 4px;font-weight:600">Teléfono</label>
+                <input name="phone" type="text" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <label style="display:block;margin:0 0 4px;font-weight:600">URL de tu perfil de Idealista *</label>
+                <input name="idealista_url" type="url" required placeholder="https://www.idealista.com/pro/tu-agencia/" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <label style="display:block;margin:0 0 4px;font-weight:600">Zonas donde operas</label>
+                <input name="zones" type="text" placeholder="Málaga, Marbella, Torremolinos" style="width:100%;padding:10px;margin-bottom:6px;border:1px solid #cbd5e0;border-radius:6px">
+                <p style="font-size:.85em;color:#718096;margin:0 0 18px">Separadas por coma o códigos postales.</p>
+                <button type="submit" style="background:#2c5282;color:#fff;border:0;padding:12px 28px;border-radius:6px;font-size:1em;font-weight:600;cursor:pointer">Unirme a la red</button>
+            </form>
+            <?php endif; ?>
+        </div>
+        <?php
+        return ob_get_clean();
+    }
+}
+
+if (!function_exists('jacobo_search_box_render')) {
+    add_shortcode('jacobo_search_box', 'jacobo_search_box_render');
+
+    function jacobo_search_box_render(array $atts = []): string {
+        $atts = shortcode_atts([
+            'titulo'      => '¿No encuentras lo que buscas?',
+            'subtitulo'   => 'Descríbelo y lo buscamos por ti entre nuestras agencias colaboradoras.',
+            'placeholder' => 'Ej: piso de 2 habitaciones en Málaga, con terraza, hasta 200.000 €',
+        ], $atts);
+
+        $msg = '';
+        $msg_ok = true;
+
+        if (($_POST['jacobo_search_submit'] ?? '') === '1'
+            && isset($_POST['jacobo_search_nonce'])
+            && wp_verify_nonce($_POST['jacobo_search_nonce'], 'jacobo_search')) {
+
+            $query = sanitize_textarea_field($_POST['query'] ?? '');
+            $name  = sanitize_text_field($_POST['name']      ?? '');
+            $email = sanitize_email($_POST['email']          ?? '');
+
+            if ($query === '') {
+                $msg = 'Escribe lo que buscas para poder ayudarte.';
+                $msg_ok = false;
+            } elseif (jacobo_api_url() === '') {
+                error_log('[jacobo-bot] jacobo_api_url no configurada (búsqueda Home).');
+                $msg = 'No podemos procesar tu búsqueda ahora mismo. Inténtalo más tarde.';
+                $msg_ok = false;
+            } else {
+                wp_remote_post(jacobo_api_url() . '/api/search', [
+                    'timeout'  => 5,
+                    'blocking' => false,
+                    'headers'  => [
+                        'X-API-Secret' => jacobo_api_secret(),
+                        'Content-Type' => 'application/json',
+                    ],
+                    'body' => wp_json_encode(['query' => $query, 'name' => $name, 'email' => $email]),
+                ]);
+                $msg = '¡Recibido! Estamos buscando y avisando a las agencias de tu zona. '
+                     . 'Si dejaste tu email, te contactaremos en cuanto tengamos algo.';
+            }
+        }
+
+        ob_start();
+        ?>
+        <div class="jacobo-search" style="max-width:640px;margin:0 auto;padding:28px;
+             background:linear-gradient(135deg,#1a365d,#2c5282);border-radius:14px;color:#fff;font-family:inherit">
+            <h3 style="margin:0 0 6px;font-size:1.5em;color:#fff"><?= esc_html($atts['titulo']) ?></h3>
+            <p style="margin:0 0 18px;opacity:.85"><?= esc_html($atts['subtitulo']) ?></p>
+            <?php if ($msg !== ''): ?>
+                <div style="padding:14px 18px;border-radius:8px;margin-bottom:16px;
+                            background:<?= $msg_ok ? 'rgba(56,178,172,.2)' : 'rgba(252,129,129,.2)' ?>;
+                            border:1px solid <?= $msg_ok ? '#38b2ac' : '#fc8181' ?>;color:#fff"><?= esc_html($msg) ?></div>
+            <?php endif; ?>
+            <form method="post">
+                <?php wp_nonce_field('jacobo_search', 'jacobo_search_nonce'); ?>
+                <input type="hidden" name="jacobo_search_submit" value="1">
+                <textarea name="query" rows="3" required placeholder="<?= esc_attr($atts['placeholder']) ?>"
+                    style="width:100%;padding:12px;border:0;border-radius:8px;margin-bottom:12px;font-size:1em;resize:vertical;box-sizing:border-box"></textarea>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+                    <input name="name" type="text" placeholder="Tu nombre (opcional)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
+                    <input name="email" type="email" placeholder="Tu email (para avisarte)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
+                </div>
+                <button type="submit" style="background:#f6ad55;color:#1a202c;border:0;padding:13px 32px;border-radius:8px;font-size:1.05em;font-weight:700;cursor:pointer">Buscar</button>
+            </form>
+        </div>
+        <?php
+        return ob_get_clean();
+    }
 }

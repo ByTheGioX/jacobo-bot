@@ -15,6 +15,7 @@ import logging
 import random
 import re
 import string
+import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 _PROFILES_PATH = Path(__file__).parent.parent / "configuracion" / "perfiles.txt"
 _SLUG_RE = re.compile(r"/pro/([^/]+)/?")
+
+# Serializa la generación de código + append a perfiles.txt: dos aprobaciones a la
+# vez no pueden generar el mismo código ni entrelazar escrituras del archivo.
+_REGISTER_LOCK = threading.Lock()
 
 # Hosts exactos permitidos (sin comodines ni substrings: evita bypass tipo
 # idealista.com.evil.com o evil.com/?idealista.). Es la frontera anti-SSRF:
@@ -134,12 +139,13 @@ def register_agency_profile(name: str, url: str) -> str:
     refresca los globals; si no, genera código nuevo, lo persiste y refresca.
     """
     url = url.strip()
-    existing = _url_already_registered(url)
-    if existing:
-        refresh_runtime(url, existing)
-        logger.info("URL ya registrada (%s) — reutilizando código %s", url, existing)
-        return existing
-    code = generate_unique_code()
-    append_profile(name, url, code)
-    refresh_runtime(url, code)
-    return code
+    with _REGISTER_LOCK:
+        existing = _url_already_registered(url)
+        if existing:
+            refresh_runtime(url, existing)
+            logger.info("URL ya registrada (%s) — reutilizando código %s", url, existing)
+            return existing
+        code = generate_unique_code()
+        append_profile(name, url, code)
+        refresh_runtime(url, code)
+        return code

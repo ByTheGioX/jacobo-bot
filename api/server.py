@@ -94,8 +94,9 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
         Guarda como 'pending' — NO scrapea hasta que el admin apruebe."""
         _require_secret()
         data = request.get_json(force=True, silent=True) or {}
-        name = (data.get("name") or "").strip()
-        url  = (data.get("idealista_url") or "").strip()
+        # Caps de longitud: el formulario es público, evita filas gigantes en la BD.
+        name = (data.get("name") or "").strip()[:200]
+        url  = (data.get("idealista_url") or "").strip()[:500]
         if not name:
             return jsonify({"error": "nombre requerido"}), 400
         if not validate_idealista_profile_url(url):
@@ -103,6 +104,7 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
         zones = data.get("zones") or []
         if isinstance(zones, str):
             zones = [z.strip() for z in zones.split(",") if z.strip()]
+        zones = [str(z)[:80] for z in zones if str(z).strip()][:20] if isinstance(zones, list) else []
         from database.db import Database
         db = Database()
         if db.signup_url_exists(url):
@@ -110,9 +112,9 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
         signup_id = db.add_signup(
             name=name,
             idealista_url=url,
-            contact_email=(data.get("email") or "").strip(),
-            phone=(data.get("phone") or "").strip(),
-            zones=zones if isinstance(zones, list) else [],
+            contact_email=(data.get("email") or "").strip()[:200],
+            phone=(data.get("phone") or "").strip()[:50],
+            zones=zones,
         )
         logger.info("Nueva solicitud de alta #%s: %s (%s)", signup_id, name, url)
         return jsonify({"status": "received", "id": signup_id}), 201

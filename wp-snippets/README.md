@@ -1,5 +1,15 @@
 # WordPress Snippets
 
+> **✅ Vía recomendada (sin editar functions.php):** el plugin
+> `wp-plugin/jacobo-agency-manager/` (v1.1.0+) **ya incluye** los shortcodes
+> `[jacobo_search_box]` y `[jacobo_onboarding_form]`. Con subir y activar el plugin
+> tienes el panel de admin **y** las dos funciones del front. Ver la guía completa en
+> `GUIA_ALTA_AGENCIAS.md` (raíz del repo).
+>
+> Los archivos `.php` de esta carpeta son la **alternativa** para quien prefiera pegarlos
+> en `functions.php` del tema. Llevan guardas `function_exists`, así que no chocan aunque
+> el plugin también esté activo.
+
 ## cf7-search-hook.php
 
 Conecta el formulario de búsqueda de Contact Form 7 con el bot Python.
