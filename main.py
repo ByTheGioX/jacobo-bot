@@ -50,11 +50,17 @@ def main():
     parser.add_argument("--email", metavar="EMAIL", default="", help="Email del comprador para --search")
     parser.add_argument("--name", metavar="NAME", default="", help="Nombre del comprador para --search")
     parser.add_argument("--dashboard", action="store_true", help="Mostrar estadísticas")
+    parser.add_argument("--serve", action="store_true",
+                        help="Solo la API web (formulario de alta + buscador + dashboard), SIN scraping automático")
     args = parser.parse_args()
 
     if args.dashboard:
         from dashboard.stats import print_dashboard
         print_dashboard()
+        return
+
+    if args.serve:
+        _run_api_only()
         return
 
     if args.search:
@@ -91,6 +97,18 @@ def main():
         app.run(host="0.0.0.0", port=FLASK_PORT, debug=False, use_reloader=False)
     finally:
         scheduler.shutdown(wait=False)
+
+
+def _run_api_only():
+    """Arranca SOLO la API web (Flask): formulario de alta, buscador y dashboard.
+    NO lanza el scheduler ni ningún ciclo de scraping. Las altas aprobadas sí
+    scrapean ESE perfil en concreto (bajo demanda), pero no hay ciclo automático."""
+    from api.server import create_app
+    from config.settings import FLASK_PORT, FLASK_SECRET, DASHBOARD_PASSWORD
+
+    app = create_app(secret=FLASK_SECRET, dashboard_password=DASHBOARD_PASSWORD)
+    logger.info("[API] Modo solo-web en http://0.0.0.0:%d (SIN scraping automático)", FLASK_PORT)
+    app.run(host="0.0.0.0", port=FLASK_PORT, debug=False, use_reloader=False)
 
 
 def _handle_search(query: str, email: str, name: str):

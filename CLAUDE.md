@@ -97,6 +97,7 @@ python main.py --dashboard
 3. En la ventana negra que aparece, escribir el comando y pulsar Enter:
    - **Prueba de 1 ciclo completo:** `python main.py --once`
    - **Modo continuo (cada 72h):** `python main.py`
+   - **Solo web (alta + buscador + dashboard, SIN scraping automático):** `python main.py --serve`
    - **Solo scrapear sin publicar:** `python main.py --scrape-only`
    - **Ver estadísticas:** `python main.py --dashboard`
    - **Diagnóstico WP listing (por qué algunas no aparecen en listing-v6-full-width):** `python -m tools.diagnose_wp_listing`

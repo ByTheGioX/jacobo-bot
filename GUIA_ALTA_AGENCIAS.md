@@ -17,15 +17,23 @@ En el VPS, abrir la carpeta del bot y ejecutar:
 cd C:\Users\LIVETEAM\Desktop\jacobo-bot && git pull
 ```
 
-Luego reiniciar el bot (cerrar la ventana negra si está abierta y volver a lanzarlo):
+Luego arrancar el bot. Tienes dos modos:
 
-```
-python main.py
-```
+- **Solo web (recomendado si NO quieres que se dispare el scraping automático):**
+  ```
+  python main.py --serve
+  ```
+  Levanta el formulario de alta, el buscador y el dashboard. Las altas que apruebes
+  sí scrapean ese perfil concreto bajo demanda, pero no hay ciclo automático de 72h.
 
-En los logs debe aparecer:
+- **Completo (web + scraping automático cada 72h):**
+  ```
+  python main.py
+  ```
+
+En ambos, en los logs debe aparecer una línea con:
 ```
-[API] Iniciando Flask en http://0.0.0.0:8080 (disponible ya)
+[API] ... en http://0.0.0.0:8080
 ```
 
 > Si el firewall del VPS (Contabo) no tiene abierto el puerto **8080 TCP**, ábrelo:
