@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  Jacobo Agency Manager
  * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
- * Version:      1.1.0
+ * Version:      1.1.1
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -19,9 +19,22 @@ add_action('admin_menu', function (): void {
     );
 });
 
-add_action('admin_init', function (): void {
-    register_setting('jacobo_bot', 'jacobo_api_url',    ['sanitize_callback' => 'sanitize_url']);
-    register_setting('jacobo_bot', 'jacobo_api_secret', ['sanitize_callback' => 'sanitize_text_field']);
+// En 'init' (no solo admin_init) y con show_in_rest: así los ajustes se pueden
+// leer/escribir vía /wp-json/wp/v2/settings con un Application Password de admin
+// (permite configurar el plugin en remoto sin entrar al panel).
+add_action('init', function (): void {
+    register_setting('jacobo_bot', 'jacobo_api_url', [
+        'type'              => 'string',
+        'sanitize_callback' => 'sanitize_url',
+        'show_in_rest'      => true,
+        'default'           => '',
+    ]);
+    register_setting('jacobo_bot', 'jacobo_api_secret', [
+        'type'              => 'string',
+        'sanitize_callback' => 'sanitize_text_field',
+        'show_in_rest'      => true,
+        'default'           => '',
+    ]);
 });
 
 function jacobo_api_url(): string {
