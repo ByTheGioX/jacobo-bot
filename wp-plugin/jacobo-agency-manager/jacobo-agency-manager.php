@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  Jacobo Agency Manager
  * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
- * Version:      1.1.1
+ * Version:      1.1.2
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -19,9 +19,9 @@ add_action('admin_menu', function (): void {
     );
 });
 
-// En 'init' (no solo admin_init) y con show_in_rest: así los ajustes se pueden
-// leer/escribir vía /wp-json/wp/v2/settings con un Application Password de admin
-// (permite configurar el plugin en remoto sin entrar al panel).
+// La URL (no sensible) se expone en /wp-json/wp/v2/settings para configuración
+// remota. El secret NO: solo tiene una ruta de ESCRITURA (abajo) — ningún GET
+// de la API puede devolverlo.
 add_action('init', function (): void {
     register_setting('jacobo_bot', 'jacobo_api_url', [
         'type'              => 'string',
@@ -32,8 +32,25 @@ add_action('init', function (): void {
     register_setting('jacobo_bot', 'jacobo_api_secret', [
         'type'              => 'string',
         'sanitize_callback' => 'sanitize_text_field',
-        'show_in_rest'      => true,
+        'show_in_rest'      => false,
         'default'           => '',
+    ]);
+});
+
+// Ruta de solo-escritura para el secret (admin con Application Password).
+// Acepta el valor nuevo y responde {updated:true}; nunca devuelve el guardado.
+add_action('rest_api_init', function (): void {
+    register_rest_route('jacobo/v1', '/secret', [
+        'methods'             => 'POST',
+        'permission_callback' => function () { return current_user_can('manage_options'); },
+        'callback'            => function (WP_REST_Request $req) {
+            $secret = sanitize_text_field((string) $req->get_param('secret'));
+            if ($secret === '') {
+                return new WP_Error('jacobo_empty_secret', 'secret requerido', ['status' => 400]);
+            }
+            update_option('jacobo_api_secret', $secret);
+            return ['updated' => true];
+        },
     ]);
 });
 
