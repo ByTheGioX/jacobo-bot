@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  Jacobo Agency Manager
  * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
- * Version:      1.1.2
+ * Version:      1.2.0
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -414,6 +414,7 @@ if (!function_exists('jacobo_search_box_render')) {
 
         $msg = '';
         $msg_ok = true;
+        $results = [];
 
         if (($_POST['jacobo_search_submit'] ?? '') === '1'
             && isset($_POST['jacobo_search_nonce'])
@@ -431,17 +432,34 @@ if (!function_exists('jacobo_search_box_render')) {
                 $msg = 'No podemos procesar tu búsqueda ahora mismo. Inténtalo más tarde.';
                 $msg_ok = false;
             } else {
-                wp_remote_post(jacobo_api_url() . '/api/search', [
-                    'timeout'  => 5,
-                    'blocking' => false,
-                    'headers'  => [
+                // sync=true: el bot busca YA y devuelve las propiedades que encajan,
+                // para mostrárselas al visitante. Si no hay, el bot avisa a las
+                // agencias de la zona en segundo plano.
+                $resp = wp_remote_post(jacobo_api_url() . '/api/search', [
+                    'timeout' => 25,
+                    'headers' => [
                         'X-API-Secret' => jacobo_api_secret(),
                         'Content-Type' => 'application/json',
                     ],
-                    'body' => wp_json_encode(['query' => $query, 'name' => $name, 'email' => $email]),
+                    'body' => wp_json_encode([
+                        'query' => $query, 'name' => $name, 'email' => $email, 'sync' => true,
+                    ]),
                 ]);
-                $msg = '¡Recibido! Estamos buscando y avisando a las agencias de tu zona. '
-                     . 'Si dejaste tu email, te contactaremos en cuanto tengamos algo.';
+                if (is_wp_error($resp)) {
+                    $msg = '¡Recibido! Estamos procesando tu búsqueda. '
+                         . 'Si dejaste tu email, te contactaremos en cuanto tengamos algo.';
+                } else {
+                    $body    = json_decode(wp_remote_retrieve_body($resp), true);
+                    $results = is_array($body) && !empty($body['matches']) ? $body['matches'] : [];
+                    if (!empty($results)) {
+                        $msg = 'Hemos encontrado ' . count($results)
+                             . ' propiedad(es) que encajan con lo que buscas:';
+                    } else {
+                        $msg = 'Ahora mismo no tenemos nada publicado que encaje, pero ya hemos '
+                             . 'avisado a las agencias colaboradoras de tu zona. Si dejaste tu '
+                             . 'email, te contactaremos en cuanto tengamos algo.';
+                    }
+                }
             }
         }
 
@@ -455,6 +473,30 @@ if (!function_exists('jacobo_search_box_render')) {
                 <div style="padding:14px 18px;border-radius:8px;margin-bottom:16px;
                             background:<?= $msg_ok ? 'rgba(56,178,172,.2)' : 'rgba(252,129,129,.2)' ?>;
                             border:1px solid <?= $msg_ok ? '#38b2ac' : '#fc8181' ?>;color:#fff"><?= esc_html($msg) ?></div>
+            <?php endif; ?>
+            <?php if (!empty($results)): ?>
+            <div style="margin-bottom:16px">
+                <?php foreach ($results as $r):
+                    $pid = intval($r['wp_post_id'] ?? 0);
+                    $url = $pid ? get_permalink($pid) : '';
+                    if (!$url) { continue; }
+                    $price = !empty($r['price']) ? number_format_i18n(floatval($r['price'])) . ' €' : '';
+                    $meta  = trim(implode(' · ', array_filter([
+                        (string) ($r['location'] ?? ''),
+                        !empty($r['rooms']) ? intval($r['rooms']) . ' hab.' : '',
+                        $price,
+                    ])));
+                ?>
+                <a href="<?= esc_url($url) ?>"
+                   style="display:block;background:rgba(255,255,255,.14);border-radius:8px;
+                          padding:12px 14px;margin-bottom:8px;color:#fff;text-decoration:none">
+                    <strong><?= esc_html(($r['title'] ?? '') !== '' ? $r['title'] : 'Ver propiedad') ?></strong>
+                    <?php if ($meta !== ''): ?>
+                        <span style="opacity:.85;display:block;font-size:.9em"><?= esc_html($meta) ?></span>
+                    <?php endif; ?>
+                </a>
+                <?php endforeach; ?>
+            </div>
             <?php endif; ?>
             <form method="post">
                 <?php wp_nonce_field('jacobo_search', 'jacobo_search_nonce'); ?>

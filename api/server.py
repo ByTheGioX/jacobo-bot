@@ -40,6 +40,11 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
             return jsonify({"error": "query requerida"}), 400
         name = data.get("name", "")
         email = data.get("email", "")
+        # sync=true (cajita del Home): busca YA y devuelve los resultados para
+        # mostrarlos al visitante; los emails a agencias siguen en background.
+        if data.get("sync"):
+            return jsonify(_process_search_sync(query, name, email)), 200
+        # Legacy (CF7 fire-and-forget): responde al instante, todo en background.
         threading.Thread(
             target=_process_search_async,
             args=(query, name, email),
@@ -181,34 +186,83 @@ def _require_secret():
         abort(401)
 
 
-def _process_search_async(query: str, name: str, email: str):
+def _send_agency_emails_async(query: str, name: str, email: str, criteria_dict: dict, search_id: int):
+    """Envía los emails a agencias en background (SMTP es lento; no bloquear al visitante)."""
     try:
-        from search.smart_search import SmartSearch, SearchCriteria
+        from search.smart_search import SearchCriteria
         from search.email_sender import AgencyEmailSender
+
+        c = criteria_dict
+        criteria = SearchCriteria(
+            raw_query=query,
+            contact_email=email,
+            contact_name=name,
+            location=c.get("location", ""),
+            zones=c.get("zones") or [],
+            property_type=c.get("property_type", ""),
+            operation=c.get("operation", "sale"),
+            rooms_min=c.get("rooms_min"),
+            rooms_max=c.get("rooms_max"),
+            price_max=c.get("price_max"),
+            area_min=c.get("area_min"),
+            has_parking=bool(c.get("has_parking")),
+            has_pool=bool(c.get("has_pool")),
+            has_terrace=bool(c.get("has_terrace")),
+        )
+        AgencyEmailSender().send_to_agencies(criteria, search_id)
+        logger.info("Búsqueda '%s' reenviada a agencias (search_id=%s)", query[:50], search_id)
+    except Exception:
+        logger.exception("Error enviando emails de búsqueda: '%s'", query[:50])
+
+
+def _process_search_sync(query: str, name: str, email: str) -> dict:
+    """Busca inline y devuelve los matches publicados (para pintarlos en la web).
+    Si no hay resultados, dispara los emails a agencias en background."""
+    try:
+        from search.smart_search import SmartSearch
 
         searcher = SmartSearch()
         result = searcher.process_query(query, contact_email=email, contact_name=name)
 
         if result["needs_agency_email"]:
-            c = result["criteria"]
-            criteria = SearchCriteria(
-                raw_query=query,
-                contact_email=email,
-                contact_name=name,
-                location=c.get("location", ""),
-                zones=c.get("zones") or [],
-                property_type=c.get("property_type", ""),
-                operation=c.get("operation", "sale"),
-                rooms_min=c.get("rooms_min"),
-                rooms_max=c.get("rooms_max"),
-                price_max=c.get("price_max"),
-                area_min=c.get("area_min"),
-                has_parking=bool(c.get("has_parking")),
-                has_pool=bool(c.get("has_pool")),
-                has_terrace=bool(c.get("has_terrace")),
-            )
-            AgencyEmailSender().send_to_agencies(criteria, result["search_id"])
-            logger.info("Búsqueda '%s' reenviada a agencias (search_id=%s)", query[:50], result["search_id"])
+            threading.Thread(
+                target=_send_agency_emails_async,
+                args=(query, name, email, result["criteria"], result["search_id"]),
+                daemon=True,
+            ).start()
+
+        # Solo se muestran al visitante las propiedades publicadas en WP.
+        visible = [
+            {
+                "wp_post_id": m["wp_post_id"],
+                "title": m.get("title") or "",
+                "price": m.get("price"),
+                "location": m.get("location") or "",
+                "rooms": m.get("rooms"),
+            }
+            for m in result["matches"] if m.get("wp_post_id")
+        ]
+        logger.info("Búsqueda sync '%s' → %d matches (%d visibles)",
+                    query[:50], len(result["matches"]), len(visible))
+        return {
+            "matches": visible[:12],
+            "total": len(visible),
+            "forwarded_to_agencies": bool(result["needs_agency_email"]),
+        }
+    except Exception:
+        logger.exception("Error en búsqueda sync: '%s'", query[:50])
+        return {"matches": [], "total": 0, "forwarded_to_agencies": False, "error": "internal"}
+
+
+def _process_search_async(query: str, name: str, email: str):
+    try:
+        from search.smart_search import SmartSearch
+
+        searcher = SmartSearch()
+        result = searcher.process_query(query, contact_email=email, contact_name=name)
+
+        if result["needs_agency_email"]:
+            _send_agency_emails_async(query, name, email, result["criteria"], result["search_id"])
         else:
             logger.info("Búsqueda '%s' → %d coincidencias en DB", query[:50], len(result["matches"]))
     except Exception:
