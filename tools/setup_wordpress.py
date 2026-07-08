@@ -164,17 +164,38 @@ def main():
         print(f"{FAIL} No pude fijar el secret: {e}")
         problems.append(f"secret: {e}")
 
-    # 4) La página /unete/ renderiza el formulario
+    # 4) La página /unete/ renderiza el formulario.
+    #    OJO caché CDmon: la copia cacheada puede ser vieja aunque el plugin ya
+    #    funcione. Se comprueba con cache-buster (?nc=...) que salta la caché;
+    #    si la versión fresca renderiza, el plugin está OK y solo es caché.
+    import time as _time
+    ua = {"User-Agent": "Mozilla/5.0"}
     try:
-        r = requests.get(f"{base}/unete/", timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-        if "jacobo_onboard_submit" in r.text:
+        fresh = requests.get(f"{base}/unete/", params={"nc": int(_time.time())}, timeout=30, headers=ua)
+        fresh_ok = "jacobo_onboard_submit" in fresh.text
+        plain = requests.get(f"{base}/unete/", timeout=30, headers=ua)
+        plain_ok = "jacobo_onboard_submit" in plain.text
+        if fresh_ok and plain_ok:
             print(f"{OK} /unete/ muestra el formulario de alta")
-        elif "jacobo_onboarding_form" in r.text:
-            print(f"{FAIL} /unete/ muestra el shortcode como texto → plugin viejo o inactivo")
-            problems.append("/unete/ no renderiza (plugin viejo/inactivo)")
+        elif fresh_ok:
+            print(f"{OK} /unete/ funciona — pero el servidor aún sirve una copia CACHEADA vieja a las visitas")
+            print("     (caduca sola; para forzarla: panel CDmon → Gestionar Caché → Limpiar)")
+            # Re-guardar la página invalida la caché en muchos setups
+            try:
+                pg = requests.get(f"{base}/wp-json/wp/v2/pages", auth=auth,
+                                  params={"slug": "unete", "status": "publish"}, timeout=30).json()
+                if pg:
+                    requests.post(f"{base}/wp-json/wp/v2/pages/{pg[0]['id']}",
+                                  auth=auth, json={"status": "publish"}, timeout=30)
+                    print("     (página re-guardada para empujar la invalidación)")
+            except Exception:
+                pass
+        elif "jacobo_onboarding_form" in fresh.text:
+            print(f"{FAIL} /unete/ muestra el shortcode como texto INCLUSO sin caché → plugin inactivo o shortcode ausente")
+            problems.append("/unete/ no renderiza ni sin caché (¿plugin activo? ¿v1.3.0?)")
         else:
-            print(f"{FAIL} /unete/ responde HTTP {r.status_code} sin formulario")
-            problems.append(f"/unete/ HTTP {r.status_code}")
+            print(f"{FAIL} /unete/ responde HTTP {fresh.status_code} sin formulario")
+            problems.append(f"/unete/ HTTP {fresh.status_code}")
     except Exception as e:
         print(f"{FAIL} No pude cargar /unete/: {e}")
         problems.append(f"/unete/: {e}")
