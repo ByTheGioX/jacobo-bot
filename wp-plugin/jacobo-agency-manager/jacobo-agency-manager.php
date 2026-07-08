@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  Jacobo Agency Manager
  * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
- * Version:      1.2.0
+ * Version:      1.3.0
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -51,6 +51,45 @@ add_action('rest_api_init', function (): void {
             update_option('jacobo_api_secret', $secret);
             return ['updated' => true];
         },
+    ]);
+});
+
+// Edición remota del layout de Elementor (solo administradores con App Password).
+//   GET  /wp-json/jacobo/v1/elementor/<id>  → JSON del layout + último backup
+//   POST /wp-json/jacobo/v1/elementor/<id>  → {data:"<json>"} lo sustituye
+// Antes de escribir guarda copia en la option jacobo_elementor_backup_<id>
+// (para restaurar: POST con el contenido de ese backup) y limpia la caché CSS.
+add_action('rest_api_init', function (): void {
+    register_rest_route('jacobo/v1', '/elementor/(?P<id>\d+)', [
+        [
+            'methods'             => 'GET',
+            'permission_callback' => function () { return current_user_can('manage_options'); },
+            'callback'            => function (WP_REST_Request $req) {
+                $id = intval($req['id']);
+                return [
+                    'id'     => $id,
+                    'data'   => (string) get_post_meta($id, '_elementor_data', true),
+                    'backup' => (string) get_option('jacobo_elementor_backup_' . $id, ''),
+                ];
+            },
+        ],
+        [
+            'methods'             => 'POST',
+            'permission_callback' => function () { return current_user_can('manage_options'); },
+            'callback'            => function (WP_REST_Request $req) {
+                $id   = intval($req['id']);
+                $data = (string) $req->get_param('data');
+                if ($data === '' || json_decode($data) === null) {
+                    return new WP_Error('jacobo_bad_json', 'data vacío o JSON no válido', ['status' => 400]);
+                }
+                update_option('jacobo_elementor_backup_' . $id, (string) get_post_meta($id, '_elementor_data', true), false);
+                update_post_meta($id, '_elementor_data', wp_slash($data));
+                if (class_exists('\\Elementor\\Plugin')) {
+                    try { \Elementor\Plugin::$instance->files_manager->clear_cache(); } catch (\Throwable $e) {}
+                }
+                return ['updated' => true, 'backup_option' => 'jacobo_elementor_backup_' . $id];
+            },
+        ],
     ]);
 });
 

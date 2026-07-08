@@ -43,7 +43,14 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
         # sync=true (cajita del Home): busca YA y devuelve los resultados para
         # mostrarlos al visitante; los emails a agencias siguen en background.
         if data.get("sync"):
-            return jsonify(_process_search_sync(query, name, email)), 200
+            try:
+                return jsonify(_process_search_sync(query, name, email)), 200
+            except Exception:
+                logger.exception("Sync search falló, degradando a async: '%s'", query[:50])
+                threading.Thread(
+                    target=_process_search_async, args=(query, name, email), daemon=True,
+                ).start()
+                return jsonify({"status": "received", "fallback": True}), 202
         # Legacy (CF7 fire-and-forget): responde al instante, todo en background.
         threading.Thread(
             target=_process_search_async,
