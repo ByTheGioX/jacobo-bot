@@ -31,11 +31,11 @@ function jacobo_onboarding_form_render(): string {
         && isset($_POST['jacobo_onboard_nonce'])
         && wp_verify_nonce($_POST['jacobo_onboard_nonce'], 'jacobo_onboard')) {
 
-        $name  = sanitize_text_field($_POST['name']          ?? '');
-        $email = sanitize_email($_POST['email']              ?? '');
-        $phone = sanitize_text_field($_POST['phone']         ?? '');
-        $url   = esc_url_raw($_POST['idealista_url']         ?? '');
-        $zones = sanitize_text_field($_POST['zones']         ?? '');
+        $name  = sanitize_text_field($_POST['jacobo_name']          ?? '');
+        $email = sanitize_email($_POST['jacobo_email']              ?? '');
+        $phone = sanitize_text_field($_POST['jacobo_phone']         ?? '');
+        $url   = esc_url_raw($_POST['jacobo_idealista_url']         ?? '');
+        $zones = sanitize_text_field($_POST['jacobo_zones']         ?? '');
 
         if ($name === '' || $url === '') {
             $msg = 'Por favor, indica al menos el nombre y la URL de tu perfil de Idealista.';
@@ -102,23 +102,23 @@ function jacobo_onboarding_form_render(): string {
             <input type="hidden" name="jacobo_onboard_submit" value="1">
 
             <label style="display:block;margin:0 0 4px;font-weight:600">Nombre de la inmobiliaria *</label>
-            <input name="name" type="text" required
+            <input name="jacobo_name" type="text" required
                    style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
 
             <label style="display:block;margin:0 0 4px;font-weight:600">Email de contacto</label>
-            <input name="email" type="email"
+            <input name="jacobo_email" type="email"
                    style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
 
             <label style="display:block;margin:0 0 4px;font-weight:600">Teléfono</label>
-            <input name="phone" type="text"
+            <input name="jacobo_phone" type="text"
                    style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
 
             <label style="display:block;margin:0 0 4px;font-weight:600">URL de tu perfil de Idealista *</label>
-            <input name="idealista_url" type="url" required placeholder="https://www.idealista.com/pro/tu-agencia/"
+            <input name="jacobo_idealista_url" type="url" required placeholder="https://www.idealista.com/pro/tu-agencia/"
                    style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
 
             <label style="display:block;margin:0 0 4px;font-weight:600">Zonas donde operas</label>
-            <input name="zones" type="text" placeholder="Málaga, Marbella, Torremolinos"
+            <input name="jacobo_zones" type="text" placeholder="Málaga, Marbella, Torremolinos"
                    style="width:100%;padding:10px;margin-bottom:6px;border:1px solid #cbd5e0;border-radius:6px">
             <p style="font-size:.85em;color:#718096;margin:0 0 18px">Separadas por coma o códigos postales.</p>
 

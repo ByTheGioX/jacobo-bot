@@ -37,9 +37,9 @@ function jacobo_search_box_render(array $atts = []): string {
         && isset($_POST['jacobo_search_nonce'])
         && wp_verify_nonce($_POST['jacobo_search_nonce'], 'jacobo_search')) {
 
-        $query = sanitize_textarea_field($_POST['query'] ?? '');
-        $name  = sanitize_text_field($_POST['name']      ?? '');
-        $email = sanitize_email($_POST['email']          ?? '');
+        $query = sanitize_textarea_field($_POST['jacobo_query'] ?? '');
+        $name  = sanitize_text_field($_POST['jacobo_name']      ?? '');
+        $email = sanitize_email($_POST['jacobo_email']          ?? '');
 
         if ($query === '') {
             $msg = 'Escribe lo que buscas para poder ayudarte.';
@@ -128,14 +128,14 @@ function jacobo_search_box_render(array $atts = []): string {
             <?php wp_nonce_field('jacobo_search', 'jacobo_search_nonce'); ?>
             <input type="hidden" name="jacobo_search_submit" value="1">
 
-            <textarea name="query" rows="3" required placeholder="<?= esc_attr($atts['placeholder']) ?>"
+            <textarea name="jacobo_query" rows="3" required placeholder="<?= esc_attr($atts['placeholder']) ?>"
                 style="width:100%;padding:12px;border:0;border-radius:8px;margin-bottom:12px;
                        font-size:1em;resize:vertical;box-sizing:border-box"></textarea>
 
             <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
-                <input name="name" type="text" placeholder="Tu nombre (opcional)"
+                <input name="jacobo_name" type="text" placeholder="Tu nombre (opcional)"
                     style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
-                <input name="email" type="email" placeholder="Tu email (para avisarte)"
+                <input name="jacobo_email" type="email" placeholder="Tu email (para avisarte)"
                     style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
             </div>
 

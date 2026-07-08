@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  Jacobo Agency Manager
  * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
- * Version:      1.3.0
+ * Version:      1.3.1
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -141,11 +141,11 @@ function jacobo_agencies_render_page(): void {
             $notice = '✅ Configuración guardada.';
 
         } elseif ($action === 'add_agency') {
-            $zones_raw = sanitize_text_field($_POST['zones'] ?? '');
+            $zones_raw = sanitize_text_field($_POST['jacobo_zones'] ?? '');
             $zones = array_values(array_filter(array_map('trim', explode(',', $zones_raw))));
             $result = jacobo_api_call('POST', '/api/agencies', [
-                'name'  => sanitize_text_field($_POST['name']  ?? ''),
-                'email' => sanitize_email($_POST['email']      ?? ''),
+                'name'  => sanitize_text_field($_POST['jacobo_name']  ?? ''),
+                'email' => sanitize_email($_POST['jacobo_email']      ?? ''),
                 'zones' => $zones,
             ]);
             if (isset($result['error'])) {
@@ -322,16 +322,16 @@ function jacobo_agencies_render_page(): void {
             <table class="form-table">
                 <tr>
                     <th><label for="agency_name">Nombre</label></th>
-                    <td><input id="agency_name" name="name" type="text" class="regular-text" required></td>
+                    <td><input id="agency_name" name="jacobo_name" type="text" class="regular-text" required></td>
                 </tr>
                 <tr>
                     <th><label for="agency_email">Email</label></th>
-                    <td><input id="agency_email" name="email" type="email" class="regular-text" required></td>
+                    <td><input id="agency_email" name="jacobo_email" type="email" class="regular-text" required></td>
                 </tr>
                 <tr>
                     <th><label for="agency_zones">Zonas</label></th>
                     <td>
-                        <input id="agency_zones" name="zones" type="text" class="regular-text"
+                        <input id="agency_zones" name="jacobo_zones" type="text" class="regular-text"
                                placeholder="malaga, marbella, torremolinos">
                         <p class="description">Separadas por coma. <strong>Vacío</strong> = recibe todas las búsquedas.</p>
                     </td>
@@ -361,11 +361,14 @@ if (!function_exists('jacobo_onboarding_form_render')) {
             && isset($_POST['jacobo_onboard_nonce'])
             && wp_verify_nonce($_POST['jacobo_onboard_nonce'], 'jacobo_onboard')) {
 
-            $name  = sanitize_text_field($_POST['name']  ?? '');
-            $email = sanitize_email($_POST['email']      ?? '');
-            $phone = sanitize_text_field($_POST['phone'] ?? '');
-            $url   = esc_url_raw($_POST['idealista_url'] ?? '');
-            $zones = sanitize_text_field($_POST['zones'] ?? '');
+            // OJO: los campos llevan prefijo jacobo_ porque 'name' (y otros) son
+            // query vars públicas de WP — un POST con 'name' secuestra el routing
+            // y manda al visitante al blog/404 en vez de re-renderizar la página.
+            $name  = sanitize_text_field($_POST['jacobo_name']  ?? '');
+            $email = sanitize_email($_POST['jacobo_email']      ?? '');
+            $phone = sanitize_text_field($_POST['jacobo_phone'] ?? '');
+            $url   = esc_url_raw($_POST['jacobo_idealista_url'] ?? '');
+            $zones = sanitize_text_field($_POST['jacobo_zones'] ?? '');
 
             if ($name === '' || $url === '') {
                 $msg = 'Por favor, indica al menos el nombre y la URL de tu perfil de Idealista.';
@@ -422,15 +425,15 @@ if (!function_exists('jacobo_onboarding_form_render')) {
                 <?php wp_nonce_field('jacobo_onboard', 'jacobo_onboard_nonce'); ?>
                 <input type="hidden" name="jacobo_onboard_submit" value="1">
                 <label style="display:block;margin:0 0 4px;font-weight:600">Nombre de la inmobiliaria *</label>
-                <input name="name" type="text" required style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <input name="jacobo_name" type="text" required style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
                 <label style="display:block;margin:0 0 4px;font-weight:600">Email de contacto</label>
-                <input name="email" type="email" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <input name="jacobo_email" type="email" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
                 <label style="display:block;margin:0 0 4px;font-weight:600">Teléfono</label>
-                <input name="phone" type="text" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <input name="jacobo_phone" type="text" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
                 <label style="display:block;margin:0 0 4px;font-weight:600">URL de tu perfil de Idealista *</label>
-                <input name="idealista_url" type="url" required placeholder="https://www.idealista.com/pro/tu-agencia/" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
+                <input name="jacobo_idealista_url" type="url" required placeholder="https://www.idealista.com/pro/tu-agencia/" style="width:100%;padding:10px;margin-bottom:14px;border:1px solid #cbd5e0;border-radius:6px">
                 <label style="display:block;margin:0 0 4px;font-weight:600">Zonas donde operas</label>
-                <input name="zones" type="text" placeholder="Málaga, Marbella, Torremolinos" style="width:100%;padding:10px;margin-bottom:6px;border:1px solid #cbd5e0;border-radius:6px">
+                <input name="jacobo_zones" type="text" placeholder="Málaga, Marbella, Torremolinos" style="width:100%;padding:10px;margin-bottom:6px;border:1px solid #cbd5e0;border-radius:6px">
                 <p style="font-size:.85em;color:#718096;margin:0 0 18px">Separadas por coma o códigos postales.</p>
                 <button type="submit" style="background:#2c5282;color:#fff;border:0;padding:12px 28px;border-radius:6px;font-size:1em;font-weight:600;cursor:pointer">Unirme a la red</button>
             </form>
@@ -459,9 +462,11 @@ if (!function_exists('jacobo_search_box_render')) {
             && isset($_POST['jacobo_search_nonce'])
             && wp_verify_nonce($_POST['jacobo_search_nonce'], 'jacobo_search')) {
 
-            $query = sanitize_textarea_field($_POST['query'] ?? '');
-            $name  = sanitize_text_field($_POST['name']      ?? '');
-            $email = sanitize_email($_POST['email']          ?? '');
+            // Prefijo jacobo_ obligatorio: 'name' es query var pública de WP y
+            // secuestraría el routing del POST (mandaba al visitante al blog).
+            $query = sanitize_textarea_field($_POST['jacobo_query'] ?? '');
+            $name  = sanitize_text_field($_POST['jacobo_name']      ?? '');
+            $email = sanitize_email($_POST['jacobo_email']          ?? '');
 
             if ($query === '') {
                 $msg = 'Escribe lo que buscas para poder ayudarte.';
@@ -540,11 +545,11 @@ if (!function_exists('jacobo_search_box_render')) {
             <form method="post">
                 <?php wp_nonce_field('jacobo_search', 'jacobo_search_nonce'); ?>
                 <input type="hidden" name="jacobo_search_submit" value="1">
-                <textarea name="query" rows="3" required placeholder="<?= esc_attr($atts['placeholder']) ?>"
+                <textarea name="jacobo_query" rows="3" required placeholder="<?= esc_attr($atts['placeholder']) ?>"
                     style="width:100%;padding:12px;border:0;border-radius:8px;margin-bottom:12px;font-size:1em;resize:vertical;box-sizing:border-box"></textarea>
                 <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
-                    <input name="name" type="text" placeholder="Tu nombre (opcional)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
-                    <input name="email" type="email" placeholder="Tu email (para avisarte)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
+                    <input name="jacobo_name" type="text" placeholder="Tu nombre (opcional)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
+                    <input name="jacobo_email" type="email" placeholder="Tu email (para avisarte)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
                 </div>
                 <button type="submit" style="background:#f6ad55;color:#1a202c;border:0;padding:13px 32px;border-radius:8px;font-size:1.05em;font-weight:700;cursor:pointer">Buscar</button>
             </form>
