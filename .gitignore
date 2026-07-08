@@ -27,3 +27,6 @@ data/*.db
 # macOS
 .DS_Store
 Proxies/
+
+# Zips del plugin generados por tools/setup_wordpress.py
+jacobo-agency-manager-v*.zip
