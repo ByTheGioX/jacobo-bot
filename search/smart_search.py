@@ -9,6 +9,7 @@ El comprador escribe en lenguaje natural y el sistema:
 import json
 import logging
 import re
+import unicodedata
 import requests
 from dataclasses import dataclass, field
 from typing import Optional
@@ -16,6 +17,25 @@ from typing import Optional
 from database.db import Database
 
 logger = logging.getLogger(__name__)
+
+
+def _norm(s: str) -> str:
+    """minúsculas + sin tildes: 'Dúplex en Málaga' → 'duplex en malaga'."""
+    s = unicodedata.normalize("NFKD", str(s or ""))
+    return "".join(ch for ch in s if not unicodedata.combining(ch)).lower()
+
+
+def _haystack(prop: dict) -> str:
+    """Texto donde buscar: título + ubicación + descripción (normalizado)."""
+    return _norm(" ".join(str(prop.get(k) or "") for k in ("title", "location", "description")))
+
+
+# Palabras sin valor para el fallback por palabras clave
+_STOPWORDS = {
+    "busco", "buscamos", "quiero", "queremos", "necesito", "comprar", "compra",
+    "venta", "vender", "alquiler", "alquilar", "para", "con", "cerca", "zona",
+    "hasta", "euros", "euro", "unas", "unos", "sobre", "entre", "algo", "tipo",
+}
 
 
 @dataclass
@@ -119,7 +139,7 @@ class SmartSearch:
             "{\n"
             '  "location": "ciudad o zona",\n'
             '  "zones": ["zona1", "zona2"],\n'
-            '  "property_type": "apartamento|piso|casa|chalet|estudio|local|garaje|terreno",\n'
+            '  "property_type": "apartamento|piso|casa|chalet|duplex|atico|adosado|pareado|estudio|local|garaje|terreno",\n'
             '  "operation": "sale|rent",\n'
             '  "rooms_min": número,\n'
             '  "rooms_max": número,\n'
@@ -180,9 +200,11 @@ class SmartSearch:
         if price_match:
             criteria.price_max = int(re.sub(r"\.", "", price_match.group(1)))
 
-        # Tipo
-        for pt in ("apartamento", "piso", "casa", "chalet", "estudio", "ático", "local"):
-            if pt in q:
+        # Tipo (comparación sin tildes: "dúplex" y "duplex" valen igual)
+        qn = _norm(q)
+        for pt in ("apartamento", "piso", "casa", "chalet", "duplex", "atico",
+                   "adosado", "pareado", "estudio", "local"):
+            if pt in qn:
                 criteria.property_type = pt
                 break
 
@@ -220,44 +242,68 @@ class SmartSearch:
 
     def _search_db(self, criteria: SearchCriteria) -> list[dict]:
         props = self.db.get_active_properties()
-        results = []
 
-        for prop in props:
-            if not self._matches(prop, criteria):
-                continue
-            results.append({
-                "idealista_id": prop["idealista_id"],
-                "title": prop["title"],
-                "price": prop["price"],
-                "location": prop["location"],
-                "rooms": prop["rooms"],
-                "area_m2": prop["area_m2"],
-                "has_parking": prop["has_parking"],
-                "wp_post_id": prop["wp_post_id"],
-            })
+        results = [self._to_result(p) for p in props if self._matches(p, criteria)]
+        if results:
+            return results
 
-        return results
+        # Fallback por palabras clave: si los criterios estructurados no dieron
+        # nada (parseo impreciso, ubicación solo en el título, etc.), buscar las
+        # palabras significativas de la consulta en título+ubicación+descripción.
+        words = [
+            w for w in re.split(r"\W+", _norm(criteria.raw_query))
+            if len(w) >= 4 and w not in _STOPWORDS
+        ]
+        if not words:
+            return []
+        logger.info("Sin matches estructurados — fallback por palabras clave: %s", words)
+        return [
+            self._to_result(p) for p in props
+            if all(w in _haystack(p) for w in words)
+        ]
+
+    @staticmethod
+    def _to_result(prop: dict) -> dict:
+        return {
+            "idealista_id": prop["idealista_id"],
+            "title": prop["title"],
+            "price": prop["price"],
+            "location": prop["location"],
+            "rooms": prop["rooms"],
+            "area_m2": prop["area_m2"],
+            "has_parking": prop["has_parking"],
+            "wp_post_id": prop["wp_post_id"],
+        }
 
     @staticmethod
     def _matches(prop: dict, c: SearchCriteria) -> bool:
-        # Operación
-        if c.operation and prop.get("operation_type") != c.operation:
+        # Operación: solo filtra si la propiedad la tiene informada (filas viejas
+        # de la BD pueden tener operation_type vacío y no deben quedar excluidas)
+        if c.operation and prop.get("operation_type") and prop["operation_type"] != c.operation:
             return False
 
         # Habitaciones
         if c.rooms_min and (prop.get("rooms") or 0) < c.rooms_min:
             return False
-        if c.rooms_max and (prop.get("rooms") or 0) > c.rooms_max:
+        if c.rooms_max and prop.get("rooms") and prop["rooms"] > c.rooms_max:
             return False
 
         # Precio
         if c.price_max and prop.get("price") and prop["price"] > c.price_max:
             return False
 
-        # Localización (búsqueda flexible)
-        if c.location:
-            loc = (prop.get("location") or "").lower()
-            if c.location.lower() not in loc:
+        hay = _haystack(prop)
+
+        # Localización: sin tildes y también contra el título/descripción
+        # ("Rancho Domingo" suele venir en el título, no en el campo location)
+        if c.location and _norm(c.location) not in hay:
+            return False
+
+        # Tipo: "dúplex"/"ático"... aparecen en el título aunque property_type
+        # de la BD diga otra cosa
+        if c.property_type:
+            pt = _norm(c.property_type)
+            if pt not in hay and pt not in _norm(prop.get("property_type") or ""):
                 return False
 
         # Parking
