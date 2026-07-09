@@ -123,12 +123,14 @@ def main():
         if i < len(orphans):
             time.sleep(args.sleep_read)
 
-    # Decidir adopciones
+    # Decidir adopciones. Se consideran TODAS las filas (también 'removed'/'paused'):
+    # un post PUBLICADO en WP con el mismo ID de Idealista es evidencia suficiente
+    # de que la propiedad está viva — p.ej. tras el incidente de borrados+restore
+    # la BD quedó entera en 'removed' apuntando a posts 47xxx ya borrados,
+    # mientras los posts vivos eran la serie 46xxx.
     adoptions: list[tuple[str, int]] = []  # (idealista_id, post_id)
     leftovers: dict[str, int] = dict(orphan_map)
     for iid, info in props.items():
-        if info["status"] != "active":
-            continue
         has_valid_post = info["wp_post_id"] and int(info["wp_post_id"]) in existing_ids
         if has_valid_post:
             continue
