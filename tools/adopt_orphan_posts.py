@@ -108,7 +108,6 @@ def main():
     args = ap.parse_args()
 
     cache_path = Path("data/adopt_scan.json")
-    wp = WPClient()
     db = Database()
 
     with db._conn() as conn:
@@ -131,6 +130,7 @@ def main():
         existing_ids = set(cache["existing_ids"])
         logger.info("Usando escaneo cacheado de hace %.1f h: %d huérfanos mapeados.", age_h, len(orphan_map))
     else:
+        wp = WPClient()  # solo en modo escaneo — con --cached no se toca WP en absoluto
         try:
             published = _fetch_posts(wp, "publish")
             drafts = _fetch_posts(wp, "draft", retries=1)
