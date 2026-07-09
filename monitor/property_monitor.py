@@ -18,7 +18,7 @@ from photo_processor.photo_classifier import OpenRouterNoCreditsError
 from wordpress.property_publisher import PropertyPublisher
 from database.db import Database
 from monitor.processing_report import CycleReporter, PropertyReport
-from config.settings import SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX, SKIP_WORDPRESS
+from config.settings import SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX, SKIP_WORDPRESS, reload_agency_table
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,10 @@ class PropertyMonitor:
         stats = RunStats()
         run_id = self.db.start_scrape_run()
         self.reporter = CycleReporter()
+        # Recarga perfiles.txt: si se agrego una agencia (tools/add_agency o a mano)
+        # con el bot ya corriendo, este ciclo la conoce y no pausa sus propiedades
+        # como "desaparecidas" (variante del incidente 15).
+        reload_agency_table()
 
         try:
             # 1. IDs ya conocidos en BD (para no re-scrapear detalles innecesariamente)

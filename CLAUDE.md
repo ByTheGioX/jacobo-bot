@@ -100,6 +100,7 @@ python main.py --dashboard
    - **Solo web (alta + buscador + dashboard, SIN scraping automático):** `python main.py --serve`
    - **Solo scrapear sin publicar:** `python main.py --scrape-only`
    - **Ver estadísticas:** `python main.py --dashboard`
+   - **Agregar agencia nueva (para el cliente, sin WordPress):** doble clic en `agregar_agencia.bat` — pide nombre + link de Idealista, genera el código interno solo y opcionalmente publica los pisos al momento. No hace falta reiniciar el bot: el ciclo recarga `perfiles.txt` al arrancar.
    - **Diagnóstico WP listing (por qué algunas no aparecen en listing-v6-full-width):** `python -m tools.diagnose_wp_listing`
    - **Diagnóstico + arreglar status meta automáticamente:** `python -m tools.diagnose_wp_listing --fix-meta`
    - **Verificar fotos crudas en WP (dry-run):** `python -m tools.verify_uploaded`

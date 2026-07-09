@@ -77,6 +77,24 @@ def _load_agency_table() -> tuple[list[str], dict[str, str]]:
 _TABLE_URLS, _TABLE_CODES = _load_agency_table()
 
 
+def reload_agency_table() -> None:
+    """Relee configuracion/perfiles*.txt y actualiza los globals EN SITIO.
+
+    Muta las listas/dicts existentes (no rebindea) para que los modulos que
+    hicieron `from config.settings import IDEALISTA_PROFILE_URLS` vean el cambio.
+    Permite agregar agencias (tools/add_agency o edicion manual del txt) sin
+    reiniciar el bot: sin esto, un ciclo en curso no conoceria la agencia nueva
+    y pausaria sus propiedades como "desaparecidas" (variante del incidente 15).
+    Si la tabla no existe o esta vacia, no toca nada (fallback .env intacto).
+    """
+    urls, codes = _load_agency_table()
+    if not urls:
+        return
+    IDEALISTA_PROFILE_URLS[:] = urls
+    AGENCY_CODES.clear()
+    AGENCY_CODES.update(codes)
+
+
 def _get(key: str, default: str = "") -> str:
     """TXT files tienen prioridad sobre .env."""
     val = _TXT.get(key)
