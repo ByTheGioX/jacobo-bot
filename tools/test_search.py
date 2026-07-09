@@ -53,6 +53,7 @@ def main():
     print()
 
     searcher = SmartSearch()
+    print(f"Parser: {'IA (OpenRouter ' + searcher._model + ')' if searcher._api_key else 'regex (SIN IA — falta OPENROUTER_API_KEY)'}")
     criteria = searcher._parse_query(query)
     print(f"Consulta: '{query}'")
     print(f"Criterios parseados: {criteria.to_dict()}")
