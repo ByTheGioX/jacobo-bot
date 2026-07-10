@@ -21,8 +21,10 @@ data/photos/
 # Base de datos SQLite (binario, no va al repo)
 data/*.db
 
-# Logs sí van al repo para análisis
-
+# Logs — el bot los reescribe en vivo en el VPS, versionarlos bloqueaba git pull
+data/jacobo_bot.log
+data/processing_report.jsonl
+data/processing_report.log
 
 # macOS
 .DS_Store
