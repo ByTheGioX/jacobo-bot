@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-python main.py
+"C:\Program Files\Python312\python.exe" main.py
