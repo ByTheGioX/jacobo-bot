@@ -3884,3 +3884,4 @@ navigating to "https://www.idealista.com/venta-casas/malaga-malaga/", waiting un
 2026-05-22 05:30:36 [WARNING] scraper.idealista_scraper — Scrape.do token 3 agotado — rotando al siguiente
 2026-05-22 05:30:36 [WARNING] scraper.idealista_scraper — Scrape.do token 4 agotado — rotando al siguiente
 2026-05-22 05:30:36 [ERROR] scraper.idealista_scraper — Scrape.do: todos los tokens agotados para https://www.idealista.com/pro/raulgalisteo
+2026-07-08 23:09:38,076 [INFO] onboarding.registry: Perfil añadido a perfiles.txt: Agencia Prueba Temporal | https://www.idealista.com/pro/agencia-prueba-temporal/ | 4IJH

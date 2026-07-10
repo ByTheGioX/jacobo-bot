@@ -255,6 +255,9 @@ def _process_search_sync(query: str, name: str, email: str) -> dict:
             "matches": visible[:12],
             "total": len(visible),
             "forwarded_to_agencies": bool(result["needs_agency_email"]),
+            # Criterios parseados por la IA: el plugin los usa para construir la
+            # URL de /search-results/ (keyword + bedrooms + max-price) y redirigir.
+            "criteria": result["criteria"],
         }
     except Exception:
         logger.exception("Error en búsqueda sync: '%s'", query[:50])

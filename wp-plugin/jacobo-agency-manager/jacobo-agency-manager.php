@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  Jacobo Agency Manager
  * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
- * Version:      1.3.1
+ * Version:      1.4.1
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -33,6 +33,15 @@ add_action('init', function (): void {
         'type'              => 'string',
         'sanitize_callback' => 'sanitize_text_field',
         'show_in_rest'      => false,
+        'default'           => '',
+    ]);
+    // Página de resultados de Houzez (ej. https://tuweb.com/search-results/).
+    // Si está configurada y la búsqueda tiene resultados, la cajita redirige ahí
+    // con los filtros aplicados. Vacía = mostrar tarjetas dentro de la cajita.
+    register_setting('jacobo_bot', 'jacobo_results_url', [
+        'type'              => 'string',
+        'sanitize_callback' => 'sanitize_url',
+        'show_in_rest'      => true,
         'default'           => '',
     ]);
 });
@@ -101,6 +110,10 @@ function jacobo_api_secret(): string {
     return (string) get_option('jacobo_api_secret', '');
 }
 
+function jacobo_results_url(): string {
+    return rtrim((string) get_option('jacobo_results_url', ''), '/');
+}
+
 function jacobo_api_call(string $method, string $path, array $body = []): array {
     if (empty(jacobo_api_url())) {
         return ['error' => 'URL de la API no configurada'];
@@ -136,8 +149,9 @@ function jacobo_agencies_render_page(): void {
         $action = sanitize_key($_POST['jacobo_action'] ?? '');
 
         if ($action === 'save_settings') {
-            update_option('jacobo_api_url',    sanitize_url($_POST['jacobo_api_url'] ?? ''));
-            update_option('jacobo_api_secret', sanitize_text_field($_POST['jacobo_api_secret'] ?? ''));
+            update_option('jacobo_api_url',     sanitize_url($_POST['jacobo_api_url'] ?? ''));
+            update_option('jacobo_api_secret',  sanitize_text_field($_POST['jacobo_api_secret'] ?? ''));
+            update_option('jacobo_results_url', sanitize_url($_POST['jacobo_results_url'] ?? ''));
             $notice = '✅ Configuración guardada.';
 
         } elseif ($action === 'add_agency') {
@@ -218,6 +232,15 @@ function jacobo_agencies_render_page(): void {
                         <input id="jacobo_api_secret" name="jacobo_api_secret" type="password"
                                class="regular-text" value="<?= $api_secret_val ?>" />
                         <p class="description">Debe coincidir con <code>FLASK_SECRET</code> en el .env del VPS.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th><label for="jacobo_results_url">Página de resultados</label></th>
+                    <td>
+                        <input id="jacobo_results_url" name="jacobo_results_url" type="url" class="regular-text"
+                               value="<?= esc_attr(jacobo_results_url()) ?>" placeholder="https://tuweb.com/search-results/" />
+                        <p class="description">Si se rellena, la cajita de búsqueda redirige aquí (con filtros)
+                        cuando hay resultados. Vacío = mostrar los resultados dentro de la cajita.</p>
                     </td>
                 </tr>
             </table>
@@ -457,6 +480,7 @@ if (!function_exists('jacobo_search_box_render')) {
         $msg = '';
         $msg_ok = true;
         $results = [];
+        $redirect_url = '';
 
         if (($_POST['jacobo_search_submit'] ?? '') === '1'
             && isset($_POST['jacobo_search_nonce'])
@@ -498,6 +522,20 @@ if (!function_exists('jacobo_search_box_render')) {
                     if (!empty($results)) {
                         $msg = 'Hemos encontrado ' . count($results)
                              . ' propiedad(es) que encajan con lo que buscas:';
+                        // Con página de resultados configurada → redirigir ahí con
+                        // los filtros que entendió la IA (keyword/bedrooms/max-price)
+                        if (jacobo_results_url() !== '') {
+                            $crit = is_array($body['criteria'] ?? null) ? $body['criteria'] : [];
+                            $args = [];
+                            $kw = trim((string) (($crit['location'] ?? '') !== ''
+                                ? $crit['location'] : ($crit['property_type'] ?? '')));
+                            if ($kw !== '')                 { $args['keyword']   = $kw; }
+                            if (!empty($crit['rooms_min'])) { $args['bedrooms']  = intval($crit['rooms_min']); }
+                            if (!empty($crit['price_max'])) { $args['max-price'] = intval($crit['price_max']); }
+                            if (!empty($args)) {
+                                $redirect_url = add_query_arg($args, jacobo_results_url() . '/');
+                            }
+                        }
                     } else {
                         $msg = 'Ahora mismo no tenemos nada publicado que encaje, pero ya hemos '
                              . 'avisado a las agencias colaboradoras de tu zona. Si dejaste tu '
@@ -507,12 +545,23 @@ if (!function_exists('jacobo_search_box_render')) {
             }
         }
 
+        $uid = wp_unique_id('jacobo_search_');
+
         ob_start();
         ?>
         <div class="jacobo-search" style="max-width:640px;margin:0 auto;padding:28px;
              background:linear-gradient(135deg,#1a365d,#2c5282);border-radius:14px;color:#fff;font-family:inherit">
             <h3 style="margin:0 0 6px;font-size:1.5em;color:#fff"><?= esc_html($atts['titulo']) ?></h3>
             <p style="margin:0 0 18px;opacity:.85"><?= esc_html($atts['subtitulo']) ?></p>
+            <?php if ($redirect_url !== ''): ?>
+                <script>window.location.replace(<?= wp_json_encode($redirect_url) ?>);</script>
+                <div style="padding:14px 18px;border-radius:8px;margin-bottom:16px;
+                            background:rgba(56,178,172,.2);border:1px solid #38b2ac;color:#fff">
+                    Te llevamos a los resultados…
+                    <a href="<?= esc_url($redirect_url) ?>" style="color:#f6ad55;font-weight:700">
+                        pincha aquí si no carga solo</a>
+                </div>
+            <?php endif; ?>
             <?php if ($msg !== ''): ?>
                 <div style="padding:14px 18px;border-radius:8px;margin-bottom:16px;
                             background:<?= $msg_ok ? 'rgba(56,178,172,.2)' : 'rgba(252,129,129,.2)' ?>;
@@ -545,8 +594,50 @@ if (!function_exists('jacobo_search_box_render')) {
             <form method="post">
                 <?php wp_nonce_field('jacobo_search', 'jacobo_search_nonce'); ?>
                 <input type="hidden" name="jacobo_search_submit" value="1">
-                <textarea name="jacobo_query" rows="3" required placeholder="<?= esc_attr($atts['placeholder']) ?>"
-                    style="width:100%;padding:12px;border:0;border-radius:8px;margin-bottom:12px;font-size:1em;resize:vertical;box-sizing:border-box"></textarea>
+                <div style="position:relative">
+                    <textarea id="<?= esc_attr($uid) ?>" name="jacobo_query" rows="3" required
+                        placeholder="<?= esc_attr($atts['placeholder']) ?>"
+                        style="width:100%;padding:12px;padding-right:50px;border:0;border-radius:8px;margin-bottom:12px;font-size:1em;resize:vertical;box-sizing:border-box"></textarea>
+                    <button type="button" id="<?= esc_attr($uid) ?>_mic" title="Dictar por voz"
+                        style="display:none;position:absolute;top:10px;right:10px;width:32px;height:32px;
+                               border:0;border-radius:50%;background:rgba(0,0,0,.15);color:#fff;
+                               cursor:pointer;font-size:16px;line-height:32px;text-align:center;padding:0">🎤</button>
+                </div>
+                <script>
+                (function(){
+                    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    var btn = document.getElementById(<?= wp_json_encode($uid . '_mic') ?>);
+                    var ta  = document.getElementById(<?= wp_json_encode($uid) ?>);
+                    if (!SR || !btn || !ta) { return; }
+                    btn.style.display = 'block';
+
+                    var recognition = new SR();
+                    recognition.lang = 'es-ES';
+                    recognition.interimResults = false;
+                    recognition.maxAlternatives = 1;
+                    var listening = false;
+
+                    recognition.addEventListener('result', function(e){
+                        var transcript = e.results[e.results.length - 1][0].transcript.trim();
+                        ta.value = (ta.value.trim() + ' ' + transcript).trim();
+                    });
+                    recognition.addEventListener('end', function(){
+                        listening = false;
+                        btn.style.background = 'rgba(0,0,0,.15)';
+                    });
+                    recognition.addEventListener('error', function(){
+                        listening = false;
+                        btn.style.background = 'rgba(0,0,0,.15)';
+                    });
+
+                    btn.addEventListener('click', function(){
+                        if (listening) { recognition.stop(); return; }
+                        listening = true;
+                        btn.style.background = '#fc8181';
+                        try { recognition.start(); } catch (err) { listening = false; }
+                    });
+                })();
+                </script>
                 <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
                     <input name="jacobo_name" type="text" placeholder="Tu nombre (opcional)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">
                     <input name="jacobo_email" type="email" placeholder="Tu email (para avisarte)" style="flex:1;min-width:160px;padding:11px;border:0;border-radius:8px;box-sizing:border-box">

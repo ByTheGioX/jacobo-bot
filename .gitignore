@@ -30,3 +30,8 @@ Proxies/
 
 # Zips del plugin generados por tools/setup_wordpress.py
 jacobo-agency-manager-v*.zip
+
+# Archivos de Claude (solo locales, no van al repo)
+CLAUDE.md
+.claude/
+docs/superpowers/
