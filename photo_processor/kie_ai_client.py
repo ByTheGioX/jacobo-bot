@@ -125,6 +125,10 @@ class KieAiClient:
                         time.sleep(5)
                         continue
                     return None
+                if code == 402:
+                    raise KieAiNoCreditsError(
+                        f"KIE.AI sin créditos (402): {data.get('msg')} — recarga saldo en https://kie.ai"
+                    )
                 if code in _RETRYABLE and attempt < 2:
                     logger.warning("Kie.ai error %s: %s — reintentando en 5s...", code, data.get("msg"))
                     time.sleep(5)
@@ -143,6 +147,8 @@ class KieAiClient:
                     continue
                 logger.error("Kie.ai HTTP %s: %s", status, e.response.text[:300] if e.response else "")
                 return None
+            except KieAiNoCreditsError:
+                raise
             except Exception as e:
                 logger.error("Kie.ai error inesperado: %s", e)
                 return None
