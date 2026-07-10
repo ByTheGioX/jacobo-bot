@@ -313,7 +313,7 @@ class PropertyPublisher:
             if not local_path:
                 continue
             # Optimizar para web (resize + recompresión) ANTES de subir.
-            # KIE.AI devuelve ~5MB por foto; optimizada queda en ~300KB.
+            # KIE.AI devuelve ~5MB por foto; optimizada queda en ~150-200KB.
             upload_path = self._optimize_for_web(local_path)
             title = f"Propiedad {internal_ref} foto {idx + 1}"
             media = self.wp.upload_media(upload_path, title)
@@ -323,9 +323,10 @@ class PropertyPublisher:
         return media_ids
 
     @staticmethod
-    def _optimize_for_web(input_path: str, max_width: int = 1920, quality: int = 85) -> str:
-        """Reduce el tamaño de la foto antes de subir: resize a max_width + JPEG quality 85.
-        KIE.AI devuelve ~5MB por imagen; tras esto queda ~250-400KB sin pérdida visual.
+    def _optimize_for_web(input_path: str, max_width: int = 1600, quality: int = 78) -> str:
+        """Reduce el tamaño de la foto antes de subir: resize a max_width + JPEG quality 78.
+        KIE.AI devuelve ~5-6MB por imagen; tras esto queda ~200-450KB según la foto, sin pérdida
+        visual perceptible (1600px sigue siendo más que suficiente para la galería/lightbox de Houzez).
         Cachea el resultado en data/photos/<id>/web/ para no re-optimizar en reintentos.
         """
         try:
