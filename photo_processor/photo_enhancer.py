@@ -126,7 +126,10 @@ class PhotoEnhancer:
         if report is not None:
             report.photos_selected = len(selected)
             report.photos_dedupe_removed = max(0, len([u for u, f in zip(photo_urls, is_floor_plan_flags) if not f]) - len(selected))
-            report.photos_home_staging = sum(1 for p in selected if p.get("empty"))
+            report.photos_home_staging = sum(
+                1 for p in selected
+                if p.get("empty") and ENABLE_HOME_STAGING and p.get("room_type") in _STAGING_ROOM_MAP
+            )
 
         # Paso 1: descargar originales — salta si ya existe el archivo cacheado por URL
         raw_paths: dict[int, Optional[str]] = {}
