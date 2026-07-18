@@ -153,7 +153,10 @@ class PhotoEnhancer:
         enhanced_urls: dict[int, Optional[str]] = {}
 
         if self.client and regular_items:
-            staging_count = sum(1 for _, p in regular_items if p.get("empty"))
+            staging_count = sum(
+                1 for _, p in regular_items
+                if p.get("empty") and ENABLE_HOME_STAGING and p.get("room_type") in _STAGING_ROOM_MAP
+            )
             logger.info(
                 "Enviando %d fotos a KIE.AI (%d con Home Staging por habitación vacía)...",
                 len(regular_items), staging_count,
