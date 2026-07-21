@@ -584,14 +584,16 @@ class IdealistaScraper:
         prop_id = self._extract_id(url)
         if not prop_id:
             return None
+        title = self._text_first(soup, ["h1.main-info__title", "h1.jumbotron-title", "h1"])
+        price_text = self._text_first(soup, ["span.info-data-price", "span.price-row"])
         prop = Property(
             idealista_id=prop_id, url=url,
-            title=self._text_first(soup, ["h1.main-info__title", "h1.jumbotron-title", "h1"]),
-            price_text=self._text_first(soup, ["span.info-data-price", "span.price-row"]),
+            title=title,
+            price_text=price_text,
             location=self._text_first(soup, ["span.main-info__title-minor", "li.header-map-list span"]),
             description=self._extract_description(soup),
             property_type=self._detect_property_type(soup),
-            operation_type=self._detect_operation_type(url),
+            operation_type=self._detect_operation_type(url, title, price_text),
         )
         prop.price = self._parse_price(prop.price_text)
         self._parse_features(soup, prop)
@@ -829,8 +831,15 @@ class IdealistaScraper:
         return next((pt for pt in types if pt in title), "propiedad")
 
     @staticmethod
-    def _detect_operation_type(url: str) -> str:
-        return "rent" if "/alquiler/" in url else "sale"
+    def _detect_operation_type(url: str, title: str = "", price_text: str = "") -> str:
+        # Las URLs de perfil de agencia (/pro/<agencia>/inmueble/<id>/) nunca llevan
+        # "/alquiler/" en la ruta, sea venta o alquiler — hay que mirar el título/precio.
+        if "/alquiler/" in url:
+            return "rent"
+        combined = f"{title} {price_text}".lower()
+        if "alquiler" in combined or "/mes" in combined:
+            return "rent"
+        return "sale"
 
 
 def _normalize_image_url(url: str) -> str:
