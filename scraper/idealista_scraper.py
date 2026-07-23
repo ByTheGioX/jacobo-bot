@@ -432,8 +432,9 @@ class IdealistaScraper:
         properties: list[Property] = []
         fetch_failed = False
         page = 1
+        next_url = self._profile_page_url(profile_url, 1)
         while True:
-            url = self._profile_page_url(profile_url, page)
+            url = next_url
             soup = self._get_soup(url)
             if soup is None:
                 # _get_soup solo devuelve None ante un fallo de fetch (rate-limit, ban,
@@ -476,8 +477,10 @@ class IdealistaScraper:
                 if prop:
                     properties.append(prop)
                 self._sleep()
-            if (limit and len(properties) >= limit) or not self._has_next_page(soup):
+            found_next_url = self._next_page_url(soup, url)
+            if (limit and len(properties) >= limit) or not found_next_url:
                 break
+            next_url = found_next_url
             page += 1
             self._sleep()
 
@@ -538,8 +541,18 @@ class IdealistaScraper:
         return url if page == 1 else f"{url}/pagina-{page}.htm"
 
     @staticmethod
-    def _has_next_page(soup: BeautifulSoup) -> bool:
-        return bool(soup.find("link", {"rel": "next"}) or soup.select_one("a.icon-arrow-right-after"))
+    def _next_page_url(soup: BeautifulSoup, current_url: str) -> Optional[str]:
+        """Extrae la URL real del link "siguiente" del HTML en vez de adivinar el patrón
+        pagina-N.htm — ese patrón daba 404 real en perfiles con varias páginas (el
+        formato de paginación de /pro/<agencia>/ no siempre coincide con el de listados
+        normales de Idealista)."""
+        link = soup.find("link", {"rel": "next"})
+        if link and link.get("href"):
+            return urljoin(current_url, link["href"])
+        a = soup.select_one("a.icon-arrow-right-after")
+        if a and a.get("href"):
+            return urljoin(current_url, a["href"])
+        return None
 
     @staticmethod
     def _clean_url(url: str) -> str:
