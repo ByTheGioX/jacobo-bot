@@ -116,7 +116,12 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="Limita a N propiedades (0 = todas)")
     ap.add_argument("--keep-photos", action="store_true",
                     help="No borrar el cache de fotos (se reutilizan, no gasta KIE)")
+    ap.add_argument("--exclude", default="",
+                    help="IDs de Idealista a dejar fuera, separados por comas "
+                         "(p.ej. los que ya existen en WP bajo otro post)")
     args = ap.parse_args()
+
+    excluidos = {x.strip() for x in args.exclude.split(",") if x.strip()}
 
     db = Database()
     with db._conn() as conn:
@@ -135,6 +140,10 @@ def main():
                 len(existing))
 
     huerfanas = [r for r in rows if int(r["wp_post_id"]) not in existing]
+    if excluidos:
+        antes = len(huerfanas)
+        huerfanas = [r for r in huerfanas if r["idealista_id"] not in excluidos]
+        logger.info("Excluidas %d propiedad(es) por --exclude", antes - len(huerfanas))
     if args.limit:
         huerfanas = huerfanas[: args.limit]
 
