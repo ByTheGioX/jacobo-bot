@@ -163,12 +163,13 @@ def main():
 
             if desaparecidas:
                 print(f"  BORRADAS DE WP ({len(desaparecidas)}) — la BD las cree publicadas pero")
-                print("  el post ya no existe (borrado manual desde el admin):")
+                print("  el post ya no existe (borrado desde el admin):")
                 for r, pid in desaparecidas:
                     print(f"    {r['idealista_id']:<12} wp={pid:<7} {(r.get('title') or '')[:44]}")
                 print()
-                print("    Se republican solas en el próximo ciclo si siguen en Idealista")
-                print("    (la BD detecta que el post no responde y las vuelve a crear).")
+                print("    OJO: NO se republican solas. Mientras el puntero viejo siga en la BD,")
+                print("    el bot las da por publicadas y no las vuelve a crear nunca.")
+                print("    Arreglar con: python -m tools.resync_deleted_posts")
                 print()
             if mal_estado:
                 print(f"  EN ESTADO INCORRECTO ({len(mal_estado)}) — el post existe pero no está")
