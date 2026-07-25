@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://www.idealista.com"
 SESSION_DIR = Path("data/browser_session")
 
+# Subsecciones del perfil que hay que recorrer aparte de la página raíz. La
+# paginación de la raíz entra solo en /venta-viviendas/, así que sin esto los
+# alquileres a partir de la página 2 no se veían nunca (92 de 123 detectadas).
+# Si una agencia no tiene esa sección, Idealista devuelve 404 y se omite.
+_PROFILE_SECTIONS = ("alquiler-viviendas",)
+
 _CAPTCHA_SIGNALS = [
     "desliza hacia la derecha",
     "muchas peticiones",
@@ -417,8 +423,8 @@ class IdealistaScraper:
                     time.sleep(10 * (attempt + 1))
         return None
 
-    def _get_soup(self, url: str) -> Optional[BeautifulSoup]:
-        html = self._get_html(url)
+    def _get_soup(self, url: str, retries: int = 3) -> Optional[BeautifulSoup]:
+        html = self._get_html(url, retries=retries)
         return BeautifulSoup(html, "lxml") if html else None
 
     # ------------------------------------------------------------------
@@ -430,59 +436,28 @@ class IdealistaScraper:
         known_ids = known_ids or set()
         logger.info("Scrapeando perfil: %s (límite: %s)", profile_url, limit or "sin límite")
         properties: list[Property] = []
-        fetch_failed = False
-        page = 1
-        next_url = self._profile_page_url(profile_url, 1)
-        while True:
-            url = next_url
-            soup = self._get_soup(url)
-            if soup is None:
-                # _get_soup solo devuelve None ante un fallo de fetch (rate-limit, ban,
-                # error de red), NUNCA por "no hay más propiedades" (eso da listing vacío).
-                # Marcamos el perfil como fallido para que el monitor NO interprete sus
-                # propiedades como bajas y las pause/borre por error.
-                logger.warning("Fetch falló en %s (página %d) — perfil marcado como fallido", profile_url, page)
-                fetch_failed = True
-                break
-            item_urls = self._parse_listing_page(soup)
-            if not item_urls:
-                if page == 1:
-                    # Página 1 sin NINGUNA propiedad = soft-block o cambio de markup,
-                    # NO una agencia vacía. Un perfil real SIEMPRE lista inmuebles.
-                    # El fetch puede devolver 200 + HTML >5000 chars que no es un captcha
-                    # reconocido (bloqueo blando de Scrapfly/DataDome), así que _get_soup
-                    # no devuelve None y el blindaje de failed_profiles no se activaría.
-                    # Lo marcamos como fallo para que el monitor NO pause/borre estas
-                    # propiedades por error (mismo blindaje que un fetch fallido).
-                    logger.warning(
-                        "Perfil %s devolvió 0 propiedades en página 1 — probable soft-block/cambio de markup. "
-                        "Marcado como fallido (no se usará para detectar bajas).",
-                        profile_url,
-                    )
-                    fetch_failed = True
-                else:
-                    logger.info("Sin mas propiedades en pagina %d. Total: %d", page, len(properties))
-                break
-            if limit:
-                remaining = limit - len(properties)
-                item_urls = item_urls[:remaining]
-            for item_url in item_urls:
-                prop_id = self._extract_id(item_url)
-                if prop_id:
-                    self.seen_ids.add(prop_id)
-                if prop_id and prop_id in known_ids:
-                    logger.debug("Propiedad %s ya en BD — saltando detalle", prop_id)
-                    continue
-                prop = self._scrape_property(item_url)
-                if prop:
-                    properties.append(prop)
-                self._sleep()
-            found_next_url = self._next_page_url(soup, url)
-            if (limit and len(properties) >= limit) or not found_next_url:
-                break
-            next_url = found_next_url
-            page += 1
-            self._sleep()
+        visited_ids: set[str] = set()
+
+        # La página raíz del perfil lista venta Y alquiler mezclados, pero su enlace
+        # "siguiente" entra en la subsección de VENTA (/venta-viviendas/pagina-N.htm).
+        # Resultado: los alquileres que no caben en la página 1 no se veían nunca.
+        # Por eso se recorren las subsecciones aparte. Si una no existe (agencia sin
+        # alquileres) devuelve 404 y simplemente se omite — NO marca el perfil como
+        # fallido, que bloquearía la detección de bajas.
+        fetch_failed = self._scrape_listing_chain(
+            self._profile_page_url(profile_url, 1), profile_url,
+            known_ids, visited_ids, properties, limit, required=True,
+        )
+        if not fetch_failed:
+            base = profile_url.rstrip("/")
+            for section in _PROFILE_SECTIONS:
+                if limit and len(properties) >= limit:
+                    break
+                self._sleep(2.0, 4.0)
+                self._scrape_listing_chain(
+                    f"{base}/{section}/", profile_url,
+                    known_ids, visited_ids, properties, limit, required=False,
+                )
 
         # Eliminar URLs que aparecen en 2+ propiedades (logos/avatares de agencia)
         if len(properties) > 1:
@@ -500,7 +475,83 @@ class IdealistaScraper:
         if fetch_failed:
             self.failed_profiles.append(profile_url)
 
+        logger.info("Perfil %s: %d propiedades vistas en total (%d nuevas para scrapear)",
+                    profile_url, len(visited_ids), len(properties))
         return properties
+
+    def _scrape_listing_chain(
+        self,
+        entry_url: str,
+        profile_url: str,
+        known_ids: set[str],
+        visited_ids: set[str],
+        properties: list[Property],
+        limit: int,
+        required: bool,
+    ) -> bool:
+        """Recorre una cadena de páginas de listado (una sección del perfil).
+
+        Devuelve True SOLO si falló el fetch de una sección obligatoria — ese es el
+        blindaje que impide que el monitor interprete un scrape incompleto como bajas.
+        Las secciones opcionales que no existen (404) devuelven False: son normales.
+        """
+        page = 1
+        next_url = entry_url
+        while True:
+            url = next_url
+            # Las secciones opcionales usan 1 solo intento: un 404 legítimo (agencia
+            # sin alquileres) no debe gastar 3 llamadas de Scrapfly por ciclo.
+            soup = self._get_soup(url, retries=3 if required else 1)
+            if soup is None:
+                if required:
+                    # _get_soup solo devuelve None ante un fallo de fetch (rate-limit,
+                    # ban, error de red), NUNCA por "no hay más propiedades" (eso da
+                    # listing vacío). Marcamos el perfil como fallido para que el
+                    # monitor NO interprete sus propiedades como bajas.
+                    logger.warning("Fetch falló en %s (página %d) — perfil marcado como fallido",
+                                   profile_url, page)
+                    return True
+                logger.info("Sección sin resultados o inexistente (%s) — se omite", url)
+                return False
+            item_urls = self._parse_listing_page(soup)
+            if not item_urls:
+                if page == 1 and required:
+                    # Página 1 sin NINGUNA propiedad = soft-block o cambio de markup,
+                    # NO una agencia vacía. Un perfil real SIEMPRE lista inmuebles.
+                    # El fetch puede devolver 200 + HTML >5000 chars que no es un captcha
+                    # reconocido (bloqueo blando de Scrapfly/DataDome), así que _get_soup
+                    # no devuelve None y el blindaje de failed_profiles no se activaría.
+                    logger.warning(
+                        "Perfil %s devolvió 0 propiedades en página 1 — probable soft-block/cambio de markup. "
+                        "Marcado como fallido (no se usará para detectar bajas).",
+                        profile_url,
+                    )
+                    return True
+                logger.info("Sin mas propiedades en %s (pagina %d). Acumulado: %d",
+                            url, page, len(properties))
+                return False
+            for item_url in item_urls:
+                if limit and len(properties) >= limit:
+                    return False
+                prop_id = self._extract_id(item_url)
+                if prop_id:
+                    self.seen_ids.add(prop_id)
+                    if prop_id in visited_ids:
+                        continue  # ya visto en otra sección de este mismo perfil
+                    visited_ids.add(prop_id)
+                if prop_id and prop_id in known_ids:
+                    logger.debug("Propiedad %s ya en BD — saltando detalle", prop_id)
+                    continue
+                prop = self._scrape_property(item_url)
+                if prop:
+                    properties.append(prop)
+                self._sleep()
+            found_next_url = self._next_page_url(soup, url)
+            if (limit and len(properties) >= limit) or not found_next_url:
+                return False
+            next_url = found_next_url
+            page += 1
+            self._sleep()
 
     def scrape_all_profiles(self, known_ids: set[str] = None) -> list[Property]:
         if not IDEALISTA_PROFILE_URLS:
