@@ -34,20 +34,31 @@ def _agency_of(url: str) -> str:
 
 def _wp_published_count() -> int:
     """Cuenta propiedades publicadas en WP. Pocas peticiones (100 por página)."""
+    return len(_wp_posts_by_status("publish"))
+
+
+def _wp_posts_by_status(status: str) -> dict[int, str]:
+    """Devuelve {post_id: status} de todas las propiedades con ese/esos estados.
+
+    Trae 100 por petición (3-4 llamadas para todo el catálogo) en vez de una por
+    propiedad — CDmon tumba el PHP con ráfagas largas (ver incidente 9).
+    """
     from wordpress.wp_client import WPClient
     wp = WPClient()
-    total, page = 0, 1
+    out: dict[int, str] = {}
+    page = 1
     while True:
         chunk = wp._get(WP_PROPERTY_REST_BASE, {
-            "per_page": 100, "page": page, "status": "publish", "_fields": "id",
+            "per_page": 100, "page": page, "status": status, "_fields": "id,status",
         })
         if not chunk:
             break
-        total += len(chunk)
+        for post in chunk:
+            out[int(post["id"])] = post.get("status", "?")
         if len(chunk) < 100:
             break
         page += 1
-    return total
+    return out
 
 
 def main():
@@ -130,21 +141,56 @@ def main():
         print("  CONTRASTE CON WORDPRESS")
         print("=" * 78)
         try:
-            wp_total = _wp_published_count()
-            print(f"  Publicadas en WordPress:   {wp_total}")
+            # Un solo barrido con todos los estados: sabemos el estado REAL de cada
+            # post sin una petición por propiedad (CDmon no aguanta esas ráfagas).
+            wp_all = _wp_posts_by_status("publish,draft,pending,private,future")
+            wp_pub = {pid for pid, st in wp_all.items() if st == "publish"}
+            print(f"  Publicadas en WordPress:   {len(wp_pub)}")
             print(f"  Publicadas según la BD:    {tot_pub}")
-            diff = wp_total - tot_pub
-            if diff == 0:
+            print(f"  Posts totales en WP:       {len(wp_all)} (cualquier estado)")
+            print()
+
+            # Desglose exacto: qué le pasó a cada propiedad que la BD cree publicada
+            desaparecidas, mal_estado = [], []
+            for r in rows:
+                if (r.get("status") or "active") == "paused" or not r.get("wp_post_id"):
+                    continue
+                pid = int(r["wp_post_id"])
+                if pid not in wp_all:
+                    desaparecidas.append((r, pid))
+                elif wp_all[pid] != "publish":
+                    mal_estado.append((r, pid, wp_all[pid]))
+
+            if desaparecidas:
+                print(f"  BORRADAS DE WP ({len(desaparecidas)}) — la BD las cree publicadas pero")
+                print("  el post ya no existe (borrado manual desde el admin):")
+                for r, pid in desaparecidas:
+                    print(f"    {r['idealista_id']:<12} wp={pid:<7} {(r.get('title') or '')[:44]}")
+                print()
+                print("    Se republican solas en el próximo ciclo si siguen en Idealista")
+                print("    (la BD detecta que el post no responde y las vuelve a crear).")
+                print()
+            if mal_estado:
+                print(f"  EN ESTADO INCORRECTO ({len(mal_estado)}) — el post existe pero no está")
+                print("  publicado (borrador/pendiente):")
+                for r, pid, st in mal_estado:
+                    print(f"    {r['idealista_id']:<12} wp={pid:<7} [{st}] {(r.get('title') or '')[:38]}")
+                print()
+                print("    Arreglar con: python -m tools.publish_drafts")
+                print()
+
+            huerfanos = len(wp_pub) - (tot_pub - len(desaparecidas) - len(mal_estado))
+            if huerfanos > 0:
+                print(f"  HUÉRFANOS ({huerfanos}): posts publicados en WP que la BD no controla.")
+                print("  Suelen ser copias de una era anterior; el bot podría duplicarlos.")
+                print("  Revisar con: python -m tools.adopt_orphan_posts")
+                print()
+            if not desaparecidas and not mal_estado and huerfanos <= 0:
                 print("  OK — la BD y WordPress coinciden.")
-            elif diff > 0:
-                print(f"  ATENCIÓN: {diff} post(s) en WP que la BD no controla (huérfanos de")
-                print("  una era anterior). Revisar con: python -m tools.adopt_orphan_posts")
-            else:
-                print(f"  ATENCIÓN: la BD cree que hay {-diff} publicadas que WP no muestra.")
-                print("  Revisar con: python -m tools.diagnose_wp_listing")
+                print()
         except Exception as e:
             print(f"  No se pudo consultar WordPress: {e}")
-        print()
+            print()
 
 
 if __name__ == "__main__":
