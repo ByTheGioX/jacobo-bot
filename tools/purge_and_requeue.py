@@ -43,25 +43,39 @@ _LIVE_STATUSES = "publish,draft,pending,private,future,trash"
 _KIE_COST_PER_PHOTO = 0.027  # USD, según la tarifa de KIE.AI
 
 
-def _wp_existing_ids(wp: WPClient) -> set[int]:
-    """IDs de todos los posts de propiedad que existen en WP, en cualquier estado."""
-    out: set[int] = set()
+def _wp_existing(wp: WPClient) -> dict[int, dict]:
+    """{post_id: {status, title}} de todos los posts de propiedad, en cualquier estado."""
+    out: dict[int, dict] = {}
     page = 1
     while True:
         try:
             chunk = wp._get(WP_PROPERTY_REST_BASE, {
-                "per_page": 100, "page": page, "status": _LIVE_STATUSES, "_fields": "id",
+                "per_page": 100, "page": page, "status": _LIVE_STATUSES,
+                "_fields": "id,status,title",
             })
         except Exception as e:
             logger.warning("Fallo leyendo página %d de WP: %s", page, e)
             break
         if not chunk:
             break
-        out.update(int(p["id"]) for p in chunk)
+        for p in chunk:
+            title = p.get("title")
+            if isinstance(title, dict):
+                title = title.get("rendered", "")
+            out[int(p["id"])] = {"status": p.get("status", "?"), "title": title or ""}
         if len(chunk) < 100:
             break
         page += 1
     return out
+
+
+def _norm_title(t: str) -> str:
+    """Normaliza un título para comparar (minúsculas, sin dobles espacios ni HTML)."""
+    import html
+    import re as _re
+    t = html.unescape(t or "")
+    t = _re.sub(r"<[^>]+>", "", t)
+    return _re.sub(r"\s+", " ", t).strip().lower()
 
 
 def _processed_dirs(row: dict) -> set[Path]:
@@ -116,8 +130,9 @@ def main():
 
     wp = WPClient()
     logger.info("Comprobando en WordPress el estado de %d propiedades...", len(rows))
-    existing = _wp_existing_ids(wp)
-    logger.info("WP tiene %d posts de propiedad (cualquier estado).", len(existing))
+    existing = _wp_existing(wp)
+    logger.info("WP tiene %d posts de propiedad (cualquier estado, papelera incluida).",
+                len(existing))
 
     huerfanas = [r for r in rows if int(r["wp_post_id"]) not in existing]
     if args.limit:
@@ -126,6 +141,18 @@ def main():
     if not huerfanas:
         print("\n  OK — todas las propiedades de la BD tienen su post en WordPress.\n")
         return
+
+    # Aviso de duplicado: el post original no existe, pero puede haber OTRO post en WP
+    # con el mismo título (p.ej. republicado a mano). Republicar crearía una copia.
+    por_titulo: dict[str, list[int]] = {}
+    for pid, info in existing.items():
+        por_titulo.setdefault(_norm_title(info["title"]), []).append(pid)
+
+    posibles_dup = []
+    for r in huerfanas:
+        match = por_titulo.get(_norm_title(r.get("title") or ""))
+        if match:
+            posibles_dup.append((r, match))
 
     total_fotos = sum(_photo_count(r) for r in huerfanas)
     coste = total_fotos * _KIE_COST_PER_PHOTO
@@ -138,6 +165,17 @@ def main():
         print(f"    {r['idealista_id']:<12} wp={r['wp_post_id']:<7} "
               f"{(r.get('title') or '')[:46]}")
     print()
+
+    if posibles_dup:
+        print("  [!] POSIBLES DUPLICADOS — ya hay un post en WP con el mismo título.")
+        print("      Republicar estas crearía una copia. Revisar antes de aplicar:")
+        for r, pids in posibles_dup:
+            ids = ", ".join(f"{p} [{existing[p]['status']}]" for p in pids)
+            print(f"      {r['idealista_id']:<12} {(r.get('title') or '')[:38]} -> ya existe: {ids}")
+        print()
+    else:
+        print("  OK — ninguna coincide por título con un post existente: sin riesgo de duplicar.")
+        print()
     print(f"  Fotos que habrá que reprocesar:  ~{total_fotos}")
     if args.keep_photos:
         print("  Cache de fotos:                   SE CONSERVA (--keep-photos) → sin coste KIE")
