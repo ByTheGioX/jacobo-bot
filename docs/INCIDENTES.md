@@ -131,6 +131,56 @@ requests.get(url + '?nocache=' + str(time.time()))
 
 ---
 
+## 11. Borrar propiedades desde el admin de WP las hacía invisibles PARA SIEMPRE
+
+**Fecha:** 2026-07-25
+**Síntoma:** El cliente veía 52-67 propiedades cuando la BD decía 91. 32 propiedades desaparecidas de la web sin que ningún ciclo las recuperara.
+**Causa raíz:** Alguien borró 32 posts desde el admin de WordPress. La BD conservó su `wp_post_id`, así que el monitor las daba por publicadas y **nunca las volvía a crear**. No estaban en la papelera (borrado permanente), así que tampoco se podían restaurar desde WP.
+**Solución aplicada:**
+- `tools/resync_deleted_posts.py` — detecta punteros muertos. Si el post está en la papelera lo restaura (gratis); si se borró del todo, limpia el `wp_post_id` para que el ciclo lo republique reutilizando el cache de fotos.
+- `tools/purge_and_requeue.py` — cuando las fotos viejas no son fiables (p.ej. generadas con Home Staging activo), borra fila + cache para reprocesar de cero. Avisa de posibles duplicados por título y estima el coste en KIE antes de aplicar.
+- `tools/relink_post.py` — si la propiedad sigue en WP bajo otro post, vincula la BD a ese post en vez de crear un duplicado. Verifica el `fave_property_id` antes de escribir.
+**Prevención:** **NUNCA borrar propiedades desde el admin de WordPress.** Para quitar algo de la web, pasarlo a borrador — el bot lo reactiva solo si vuelve a Idealista. Auditar periódicamente con `python -m tools.audit_inventory`.
+
+---
+
+## 12. Los alquileres a partir de la página 2 no se scrapeaban NUNCA
+
+**Fecha:** 2026-07-25
+**Síntoma:** Faltaban ~30 propiedades. Además, 9 alquileres se pausaron por "ya no está en Idealista" cuando seguían publicados.
+**Causa raíz:** La página raíz del perfil lista venta y alquiler mezclados, pero su enlace "siguiente" entra en la subsección de **venta** (`/venta-viviendas/pagina-N.htm`). De la página 2 en adelante solo se veían ventas. Los alquileres que no cabían en la página 1 no se detectaban jamás, y el monitor los interpretaba como bajas.
+**Solución aplicada:** `scrape_profile` recorre `/alquiler-viviendas/` como sección aparte (`_PROFILE_SECTIONS`). Si una agencia no la tiene, Idealista da 404 y se omite sin marcar el perfil como fallido y con 1 solo intento (no gasta créditos de Scrapfly).
+**Nota:** Quedan sin escanear otras secciones del perfil (locales, garajes, obra nueva). Si el catálogo debe incluirlas, añadirlas a `_PROFILE_SECTIONS`.
+
+---
+
+## 13. El patrón de paginación `pagina-N.htm` daba 404 real
+
+**Fecha:** 2026-07-23
+**Síntoma:** Un perfil llevaba semanas fallando en la página 2 (`404` de Scrapfly). Como el blindaje lo marcaba como "perfil fallido", se omitía la detección de bajas en TODOS los ciclos, acumulando deuda que luego se descargó de golpe (17 pausadas a la vez).
+**Causa raíz:** `_profile_page_url` construía la URL adivinando el patrón `<perfil>/pagina-2.htm`, pero la real es `<perfil>/venta-viviendas/pagina-2.htm`.
+**Solución aplicada:** `_next_page_url` extrae el `href` real del `<link rel="next">` o del botón siguiente del propio HTML. Nunca se adivina la URL.
+
+---
+
+## 14. Alquileres publicados en WordPress como "En venta"
+
+**Fecha:** 2026-07-25
+**Síntoma:** Propiedades tituladas "Alquiler de piso en…" salían con la etiqueta EN VENTA.
+**Causa raíz:** `_detect_operation_type` miraba si la URL contenía `/alquiler/`, pero las URLs de perfil de agencia (`/pro/<agencia>/inmueble/<id>/`) nunca llevan ese segmento — todo se clasificaba como venta.
+**Solución aplicada:** La detección usa el título y el precio (`Alquiler de…`, `€/mes`). Para las ya publicadas mal: `python -m tools.fix_rental_status` (dry-run) → `--apply`.
+
+---
+
+## 15. KIE.AI devuelve el 402 "sin créditos" dentro del JSON, no como error HTTP
+
+**Fecha:** 2026-07-18
+**Síntoma:** Al agotarse el saldo, el ciclo seguía intentando decenas de propiedades más, todas abortadas, en vez de detenerse.
+**Causa raíz:** KIE.AI responde HTTP 200 con `{"code": 402, "msg": "Credits insufficient"}`. El chequeo solo miraba `raise_for_status()`, así que `KieAiNoCreditsError` nunca se lanzaba y no se activaba el corte en seco ya programado en `property_monitor`.
+**Solución aplicada:** Se comprueba también `data.get("code") == 402` en `kie_ai_client.enhance_photo`.
+
+---
+
 ## Checklist rápido para futuras incidencias
 
 Antes de correr cualquier herramienta de mantenimiento contra WordPress en producción:
