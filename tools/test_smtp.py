@@ -71,12 +71,17 @@ def _cert_names(host: str, port: int) -> list[str]:
 
 
 def _try(host: str, port: int) -> tuple[str, list[str]]:
-    """Devuelve (estado, nombres_del_certificado). Estado: ok | inseguro | fallo."""
+    """Devuelve (estado, nombres_del_certificado). Estado: ok | inseguro | fallo.
+
+    Siempre empieza validando el nombre del certificado (verify=True explícito,
+    sin mirar SMTP_VERIFY_CERT): así el estado refleja lo que de verdad hace
+    falta y no lo que ya hubiera configurado el usuario.
+    """
     label = f"{host}:{port}"
     try:
-        server = _connect(host, port, timeout=25)
+        server = _connect(host, port, timeout=25, verify=True)
         server.quit()
-        print(f"  OK    {label}  -> login correcto")
+        print(f"  OK    {label}  -> login correcto (certificado validado)")
         return "ok", []
     except ssl.SSLCertVerificationError:
         print(f"  AVISO {label}  -> conecta, pero el certificado no es para este nombre")
