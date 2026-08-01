@@ -153,6 +153,9 @@ SMTP_USER: str = _get("SMTP_USER")
 SMTP_PASSWORD: str = _get("SMTP_PASSWORD")
 EMAIL_FROM: str = _get("EMAIL_FROM")
 EMAIL_FROM_NAME: str = _get("EMAIL_FROM_NAME", "Inmobiliaria")
+# Hosting compartido: el servidor presenta el certificado del cluster, no el del
+# dominio. SMTP_VERIFY_CERT=0 mantiene el cifrado pero no valida el nombre.
+SMTP_VERIFY_CERT: bool = _get("SMTP_VERIFY_CERT", "1").strip().lower() not in ("0", "false", "no")
 
 # Agencias colaboradoras (desde TXT o .env como fallback)
 _agencies_from_txt = _build_agencies(_TXT)

@@ -10,14 +10,24 @@ El modo de cifrado depende del puerto y equivocarse no da un error claro
 import smtplib
 import ssl
 
-from config.settings import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
+from config.settings import (
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_VERIFY_CERT,
+)
 
 
-def connect(host: str = "", port: int = 0, timeout: int = 30) -> smtplib.SMTP:
-    """Devuelve una conexión SMTP ya autenticada (el llamante hace sendmail/quit)."""
+def connect(host: str = "", port: int = 0, timeout: int = 30,
+            verify: bool | None = None) -> smtplib.SMTP:
+    """Devuelve una conexión SMTP ya autenticada (el llamante hace sendmail/quit).
+
+    verify=False sigue cifrando la conexión, solo se salta la comprobación de
+    que el nombre del certificado coincida con el host (ver SMTP_VERIFY_CERT).
+    """
     host = host or SMTP_HOST
     port = int(port or SMTP_PORT)
     context = ssl.create_default_context()
+    if not (SMTP_VERIFY_CERT if verify is None else verify):
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
 
     if port == 465:
         server = smtplib.SMTP_SSL(host, port, timeout=timeout, context=context)

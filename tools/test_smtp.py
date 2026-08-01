@@ -12,6 +12,10 @@ Si desde el PC da timeout pero desde el VPS funciona, el problema es la red loca
 """
 
 import argparse
+import re
+import smtplib
+import socket
+import ssl
 import sys
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -25,16 +29,71 @@ from config.settings import (
 from search.smtp_client import connect as _connect
 
 
-def _try(host: str, port: int) -> bool:
+def _peer_cert(host: str, port: int, context: ssl.SSLContext, binary: bool):
+    """Certificado que presenta el servidor (465 = SSL directo, resto = STARTTLS)."""
+    if port == 465:
+        with socket.create_connection((host, port), timeout=15) as sock:
+            with context.wrap_socket(sock, server_hostname=host) as ssock:
+                return ssock.getpeercert(binary_form=binary)
+    server = smtplib.SMTP(host, port, timeout=15)
+    try:
+        server.ehlo()
+        server.starttls(context=context)
+        return server.sock.getpeercert(binary_form=binary)
+    finally:
+        try:
+            server.close()
+        except Exception:
+            pass
+
+
+def _cert_names(host: str, port: int) -> list[str]:
+    """Nombres de dominio para los que ese certificado sí es válido."""
+    context = ssl.create_default_context()
+    context.check_hostname = False  # valida la cadena pero no el nombre: así se puede leer
+    try:
+        cert = _peer_cert(host, port, context, binary=False) or {}
+        names = [v for typ, v in cert.get("subjectAltName", ()) if typ == "DNS"]
+        names += [v for rdn in cert.get("subject", ()) for k, v in rdn if k == "commonName"]
+        if names:
+            return list(dict.fromkeys(names))
+    except Exception:
+        pass
+
+    # La cadena tampoco valida: sacar los nombres del certificado en crudo
+    try:
+        context.verify_mode = ssl.CERT_NONE
+        der = _peer_cert(host, port, context, binary=True) or b""
+        found = re.findall(rb"[a-z0-9*][a-z0-9.*-]{4,}\.[a-z]{2,}", der.lower())
+        return list(dict.fromkeys(n.decode() for n in found))
+    except Exception:
+        return []
+
+
+def _try(host: str, port: int) -> tuple[str, list[str]]:
+    """Devuelve (estado, nombres_del_certificado). Estado: ok | inseguro | fallo."""
     label = f"{host}:{port}"
     try:
         server = _connect(host, port, timeout=25)
         server.quit()
         print(f"  OK    {label}  -> login correcto")
-        return True
+        return "ok", []
+    except ssl.SSLCertVerificationError:
+        print(f"  AVISO {label}  -> conecta, pero el certificado no es para este nombre")
+        names = _cert_names(host, port)
+        if names:
+            print(f"        certificado valido para: {', '.join(names[:8])}")
+        try:
+            server = _connect(host, port, timeout=25, verify=False)
+            server.quit()
+            print(f"  OK    {label}  -> login correcto SIN verificar el certificado")
+            return "inseguro", names
+        except Exception as e:
+            print(f"  FALLO {label}  -> sin verificar tampoco: {type(e).__name__}: {str(e)[:130]}")
+            return "fallo", names
     except Exception as e:
-        print(f"  FALLO {label}  -> {type(e).__name__}: {str(e)[:110]}")
-        return False
+        print(f"  FALLO {label}  -> {type(e).__name__}: {str(e)[:130]}")
+        return "fallo", []
 
 
 def main():
@@ -58,11 +117,27 @@ def main():
                     candidates.append((host, port))
 
     print("\nProbando conexión:")
-    ok_combo = None
+    ok_combo = None       # (host, port, verifica_certificado)
+    cert_names: list[str] = []
     for host, port in candidates:
-        if _try(host, port):
-            ok_combo = (host, port)
+        estado, names = _try(host, port)
+        cert_names += [n for n in names if n not in cert_names]
+        if estado == "ok":
+            ok_combo = (host, port, True)
             break
+        if estado == "inseguro" and not ok_combo:
+            ok_combo = (host, port, False)  # plan B: seguimos buscando uno limpio
+
+    # Plan A: si el certificado es de otro nombre, probar ESE nombre con validación
+    if ok_combo and not ok_combo[2] and cert_names:
+        print("\nProbando los nombres del certificado (para no desactivar la validación):")
+        for name in cert_names[:5]:
+            if "*" in name:
+                continue
+            estado, _ = _try(name, ok_combo[1])
+            if estado == "ok":
+                ok_combo = (name, ok_combo[1], True)
+                break
 
     if not ok_combo:
         print("\nNinguna combinación funcionó. Posibles causas:")
@@ -71,9 +146,16 @@ def main():
         print("  - Contraseña incorrecta (el login daría 535, no timeout)")
         return
 
-    host, port = ok_combo
-    if (host, port) != (SMTP_HOST, SMTP_PORT):
-        print(f"\nActualiza configuracion/04_email.txt con SMTP_HOST={host} y SMTP_PORT={port}")
+    host, port, verified = ok_combo
+    print("\n--- CONFIGURACION QUE FUNCIONA ---")
+    print(f"SMTP_HOST={host}")
+    print(f"SMTP_PORT={port}")
+    if not verified:
+        print("SMTP_VERIFY_CERT=0")
+        print("  (el servidor presenta el certificado del cluster de CDmon, no el del")
+        print("   dominio; la conexión sigue cifrada pero no se valida el nombre)")
+    if (host, port) != (SMTP_HOST, SMTP_PORT) or not verified:
+        print("Copia estas líneas en configuracion/04_email.txt")
 
     if not args.to:
         print("\nLogin correcto. Para enviar un email de prueba: --to tucorreo@gmail.com")
@@ -84,7 +166,7 @@ def main():
     msg["From"] = f"{EMAIL_FROM_NAME} <{EMAIL_FROM}>"
     msg["To"] = args.to
     try:
-        server = _connect(host, port)
+        server = _connect(host, port, verify=verified)
         server.sendmail(EMAIL_FROM, [args.to], msg.as_string())
         server.quit()
         print(f"\nEmail de prueba enviado a {args.to}. Revisa también la carpeta de spam.")

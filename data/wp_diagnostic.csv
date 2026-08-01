@@ -1,21 +1,11 @@
 id,wp_status,title,link,fave_property_status,fave_property_price,fave_property_type,missing_metas,invalid_status_slug,ok_for_listing
-46484,publish,Casa o chalet independiente en venta en Rancho Domingo &#8211; La Hacienda,https://www.inmo4you.com/property/casa-o-chalet-independiente-en-venta-en-rancho-domingo-la-hacienda/,en-venta,1300000,Casa,,False,True
-46467,publish,Dúplex en venta en Centro Histórico,https://www.inmo4you.com/property/duplex-en-venta-en-centro-historico/,en-venta,950000,Propiedad,,False,True
-46453,publish,Piso en venta en Centro Histórico,https://www.inmo4you.com/property/piso-en-venta-en-centro-historico/,en-venta,730000,Piso,,False,True
-46437,publish,Piso en venta en CL Virgen De La Concepcion,https://www.inmo4you.com/property/piso-en-venta-en-cl-virgen-de-la-concepcion/,en-venta,230000,Piso,,False,True
-46425,publish,Casa o chalet independiente en venta en Calle Orégano,https://www.inmo4you.com/property/casa-o-chalet-independiente-en-venta-en-calle-oregano/,en-venta,1650000,Casa,,False,True
-46402,publish,Piso en venta en Avenida Fuengirola,https://www.inmo4you.com/property/piso-en-venta-en-avenida-fuengirola/,en-venta,628000,Piso,,False,True
-46392,publish,Ático en venta en Andromeda,https://www.inmo4you.com/property/atico-en-venta-en-andromeda/,en-venta,550000,Ático,,False,True
-46375,publish,"Piso en venta en CL Martinez De La Rosa, 39",https://www.inmo4you.com/property/piso-en-venta-en-cl-martinez-de-la-rosa-39/,en-venta,265000,Piso,,False,True
-46368,publish,Piso en venta en Pedregalejo &#8211; Morlaco,https://www.inmo4you.com/property/piso-en-venta-en-pedregalejo-morlaco/,en-venta,550000,Piso,,False,True
-46352,publish,Chalet pareado en venta en El Palo,https://www.inmo4you.com/property/chalet-pareado-en-venta-en-el-palo/,en-venta,775000,Chalet,,False,True
-46338,publish,Piso en venta en Calle Armengual de la Mota,https://www.inmo4you.com/property/piso-en-venta-en-calle-armengual-de-la-mota/,en-venta,380000,Piso,,False,True
-46328,publish,Piso en venta en Calle de la Era,https://www.inmo4you.com/property/piso-en-venta-en-calle-de-la-era/,en-venta,890000,Piso,,False,True
-46308,publish,Piso en venta en Calle Marcos Zapata,https://www.inmo4you.com/property/piso-en-venta-en-calle-marcos-zapata/,en-venta,449000,Piso,,False,True
-46290,publish,Piso en venta en Paseo Reding,https://www.inmo4you.com/property/piso-en-venta-en-paseo-reding/,en-venta,730000,Piso,,False,True
-46274,publish,Piso en venta en Los Castillejos &#8211; La Trinidad,https://www.inmo4you.com/property/piso-en-venta-en-los-castillejos-la-trinidad/,en-venta,250000,Piso,,False,True
-46261,publish,Ático en venta en Pasillo de Santa Isabel,https://www.inmo4you.com/property/atico-en-venta-en-pasillo-de-santa-isabel/,en-venta,750000,Ático,,False,True
-46246,publish,Piso en venta en CL Duquesa De Parcent,https://www.inmo4you.com/property/piso-en-venta-en-cl-duquesa-de-parcent/,en-venta,775000,Piso,,False,True
-45991,publish,Familia en el mar de Guadalmar,https://www.inmo4you.com/property/familia-en-el-mar-de-guadalmar/,for-sale,,,"fave_property_price,fave_property_id,fave_property_type",True,False
-45978,publish,Victoria Familia Bohemia Vintage centro ciudad,https://www.inmo4you.com/property/victoria-familia-bohemia-vintage-centro-ciudad/,for-sale,,,"fave_property_price,fave_property_id,fave_property_type",True,False
-45952,publish,"Gran Apartamento familiar, amigos o trabajo",https://www.inmo4you.com/property/gran-apartamento-familiar-amigos-o-trabajo/,for-sale,,,"fave_property_price,fave_property_id,fave_property_type",True,False
+48357,publish,Piso en venta en Calle Martínez Falero s/n,https://www.inmo4you.com/property/piso-en-venta-en-calle-martinez-falero-s-n/,en-venta,380000,Piso,,False,True
+48344,publish,"Casa o chalet independiente en venta en Calle Baja, 5",https://www.inmo4you.com/property/casa-o-chalet-independiente-en-venta-en-calle-baja-5/,en-venta,870000,Casa,,False,True
+48325,publish,Alquiler de piso en Calle Cortina del Muelle,https://www.inmo4you.com/property/alquiler-de-piso-en-calle-cortina-del-muelle-2/,en-venta,4200,Piso,,False,True
+48315,publish,Estudio en venta en Centro Histórico,https://www.inmo4you.com/property/estudio-en-venta-en-centro-historico/,en-venta,295000,Estudio,,False,True
+48305,publish,Ático en venta en La Cala del Moral,https://www.inmo4you.com/property/atico-en-venta-en-la-cala-del-moral/,en-venta,442000,Ático,,False,True
+48292,publish,Piso en venta en El Palo,https://www.inmo4you.com/property/piso-en-venta-en-el-palo/,en-venta,549000,Piso,,False,True
+48278,publish,Casa o chalet independiente en venta en El Palo,https://www.inmo4you.com/property/casa-o-chalet-independiente-en-venta-en-el-palo-3/,en-venta,465000,Casa,,False,True
+48261,publish,Casa o chalet independiente en venta en Pinares de San Antón,https://www.inmo4you.com/property/casa-o-chalet-independiente-en-venta-en-pinares-de-san-anton/,en-venta,850000,Casa,,False,True
+48241,publish,Casa o chalet independiente en venta en Avenida Juan Sebastián Elcano,https://www.inmo4you.com/property/casa-o-chalet-independiente-en-venta-en-avenida-juan-sebastian-elcano/,en-venta,915000,Casa,,False,True
+48225,publish,"Chalet adosado en venta en Calle Arquitecto Alonso Carbonell, 4",https://www.inmo4you.com/property/chalet-adosado-en-venta-en-calle-arquitecto-alonso-carbonell-4/,en-venta,750000,Chalet,,False,True
