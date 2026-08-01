@@ -105,6 +105,8 @@ def main():
     ap = argparse.ArgumentParser(description="Test de configuración SMTP")
     ap.add_argument("--probe", action="store_true", help="Prueba varias combinaciones host/puerto")
     ap.add_argument("--to", help="Envía un email de prueba a esta dirección")
+    ap.add_argument("--firma", action="store_true",
+                    help="Con --to: manda el correo real a agencias (con la firma) en vez del texto suelto")
     args = ap.parse_args()
 
     domain = SMTP_USER.split("@")[-1] if "@" in SMTP_USER else ""
@@ -173,8 +175,26 @@ def main():
         print("\nLogin correcto. Para enviar un email de prueba: --to tucorreo@gmail.com")
         return
 
-    msg = MIMEText("Prueba de configuración SMTP de Jacobo-Bot. Si lees esto, funciona.", "plain", "utf-8")
-    msg["Subject"] = "Test SMTP — Jacobo-Bot"
+    if args.firma:
+        # Correo real que reciben las agencias, con datos de ejemplo
+        from search.smart_search import SearchCriteria
+        from search.email_sender import _build_email_body
+
+        criteria = SearchCriteria(
+            raw_query="Piso de 3 dormitorios en Rincón de la Victoria hasta 450.000",
+            location="Málaga Este, Rincón de la Victoria",
+            property_type="piso", operation="sale", rooms_min=3, price_max=450000,
+            contact_name="Cliente de ejemplo", contact_email="cliente@ejemplo.com",
+        )
+        asunto, cuerpo = _build_email_body("Inmobiliaria Colaboradora", criteria, EMAIL_FROM_NAME)
+        msg = MIMEText(cuerpo, "html", "utf-8")
+        msg["Subject"] = f"[PRUEBA] {asunto}"
+        print(f"\nEnviando el correo real a agencias ({len(cuerpo.encode()) / 1024:.1f} KB)")
+        if "<img" not in cuerpo:
+            print("Aviso: la firma va sin imágenes. Corre antes: python -m tools.upload_email_assets --apply")
+    else:
+        msg = MIMEText("Prueba de configuración SMTP de Jacobo-Bot. Si lees esto, funciona.", "plain", "utf-8")
+        msg["Subject"] = "Test SMTP — Jacobo-Bot"
     msg["From"] = f"{EMAIL_FROM_NAME} <{EMAIL_FROM}>"
     msg["To"] = args.to
     try:
