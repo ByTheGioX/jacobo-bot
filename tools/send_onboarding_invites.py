@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config.settings import EMAIL_FROM, EMAIL_FROM_NAME
 from database.db import Database
+from search.email_signature import render as render_signature
 from search.smtp_client import connect as smtp_connect
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -56,8 +57,8 @@ compradores de tu zona.</p>
 </p>
 <p style="font-size:13px;color:#718096">Si el botón no funciona, copia este enlace:
 <br>{link}</p>
-<hr style="border:none;border-top:1px solid #e2e8f0;margin-top:28px">
-<p style="font-size:11px;color:#718096">Un cordial saludo,<br>{EMAIL_FROM_NAME}</p>
+<p style="margin-top:24px">Un cordial saludo,</p>
+{render_signature()}
 </body></html>"""
     return subject, body
 

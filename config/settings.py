@@ -158,6 +158,17 @@ EMAIL_FROM_NAME: str = _get("EMAIL_FROM_NAME", "Inmobiliaria")
 # cifrado y la validación de la cadena; solo omite la coincidencia del nombre.
 SMTP_VERIFY_CERT: bool = _get("SMTP_VERIFY_CERT", "1").strip().lower() not in ("0", "false", "no")
 
+# Firma de los correos (bloque de logo + contacto que se añade al final)
+FIRMA_NOMBRE: str = _get("FIRMA_NOMBRE")
+FIRMA_CARGO: str = _get("FIRMA_CARGO")
+FIRMA_TELEFONO: str = _get("FIRMA_TELEFONO")
+FIRMA_WEB: str = _get("FIRMA_WEB")
+FIRMA_ZONA: str = _get("FIRMA_ZONA")
+# URLs públicas: las imágenes en base64 no las pinta Outlook y disparan el peso
+# del correo (Gmail recorta a partir de 102 KB). Se suben con tools/upload_email_assets.py
+FIRMA_FOTO_URL: str = _get("FIRMA_FOTO_URL")
+FIRMA_LOGO_URL: str = _get("FIRMA_LOGO_URL")
+
 # Agencias colaboradoras (desde TXT o .env como fallback)
 _agencies_from_txt = _build_agencies(_TXT)
 if _agencies_from_txt:

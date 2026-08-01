@@ -15,6 +15,7 @@ from config.settings import (
     EMAIL_FROM, EMAIL_FROM_NAME, COLLABORATING_AGENCIES,
 )
 from database.db import Database
+from search.email_signature import render as render_signature
 from search.smtp_client import connect as smtp_connect
 from search.smart_search import SearchCriteria
 
@@ -86,17 +87,9 @@ os agradeceríamos que nos enviaseis la información a <a href="mailto:{EMAIL_FR
 
 <p>Quedamos a vuestra disposición para cualquier consulta.</p>
 
-<p style="margin-top: 24px;">
-Un cordial saludo,<br>
-<strong>{our_agency_name}</strong><br>
-<a href="mailto:{EMAIL_FROM}">{EMAIL_FROM}</a>
-</p>
+<p style="margin-top: 24px;">Un cordial saludo,</p>
 
-<hr style="border: none; border-top: 1px solid #e2e8f0; margin-top: 32px;">
-<p style="font-size: 11px; color: #718096;">
-Este email se ha generado automáticamente. Si no desea recibir más comunicaciones,
-por favor responda indicándolo.
-</p>
+{render_signature()}
 
 </body>
 </html>
