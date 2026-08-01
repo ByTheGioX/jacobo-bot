@@ -7,16 +7,15 @@ Usa SMTP del hosting (sin dependencias de SendGrid/Mailgun, etc.)
 
 import json as _json
 import logging
-import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 
 from config.settings import (
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
     EMAIL_FROM, EMAIL_FROM_NAME, COLLABORATING_AGENCIES,
 )
 from database.db import Database
+from search.smtp_client import connect as smtp_connect
 from search.smart_search import SearchCriteria
 
 logger = logging.getLogger(__name__)
@@ -189,10 +188,7 @@ class AgencyEmailSender:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
 
         try:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(SMTP_USER, SMTP_PASSWORD)
+            with smtp_connect() as server:
                 server.sendmail(EMAIL_FROM, [to_email], msg.as_string())
             logger.info(f"Email enviado a {to_email} ({to_name})")
             return True

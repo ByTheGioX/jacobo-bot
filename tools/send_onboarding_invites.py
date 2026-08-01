@@ -21,7 +21,6 @@ SIEMPRE correr primero sin --apply (dry-run) para revisar destinatarios y el lin
 import argparse
 import csv
 import logging
-import smtplib
 import sys
 import time
 from email.mime.multipart import MIMEMultipart
@@ -30,11 +29,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config.settings import (
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
-    EMAIL_FROM, EMAIL_FROM_NAME,
-)
+from config.settings import EMAIL_FROM, EMAIL_FROM_NAME
 from database.db import Database
+from search.smtp_client import connect as smtp_connect
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -74,10 +71,7 @@ def _send(to_email: str, to_name: str, link: str) -> bool:
     msg["Reply-To"] = EMAIL_FROM
     msg.attach(MIMEText(body_html, "html", "utf-8"))
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
+        with smtp_connect() as server:
             server.sendmail(EMAIL_FROM, [to_email], msg.as_string())
         logger.info("Enviado a %s (%s)", to_email, to_name or "—")
         return True

@@ -12,8 +12,6 @@ Si desde el PC da timeout pero desde el VPS funciona, el problema es la red loca
 """
 
 import argparse
-import smtplib
-import ssl
 import sys
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -24,25 +22,13 @@ from config.settings import (
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
     EMAIL_FROM, EMAIL_FROM_NAME,
 )
-
-
-def _connect(host: str, port: int, timeout: int = 25):
-    """Devuelve una conexión SMTP autenticada (SSL directo en 465, STARTTLS si no)."""
-    if port == 465:
-        server = smtplib.SMTP_SSL(host, port, timeout=timeout, context=ssl.create_default_context())
-    else:
-        server = smtplib.SMTP(host, port, timeout=timeout)
-        server.ehlo()
-        server.starttls(context=ssl.create_default_context())
-        server.ehlo()
-    server.login(SMTP_USER, SMTP_PASSWORD)
-    return server
+from search.smtp_client import connect as _connect
 
 
 def _try(host: str, port: int) -> bool:
     label = f"{host}:{port}"
     try:
-        server = _connect(host, port)
+        server = _connect(host, port, timeout=25)
         server.quit()
         print(f"  OK    {label}  -> login correcto")
         return True
@@ -65,8 +51,9 @@ def main():
 
     candidates = [(SMTP_HOST, SMTP_PORT)]
     if args.probe:
-        for host in (SMTP_HOST, f"smtp.{domain}", f"mail.{domain}", f"correo.{domain}"):
-            for port in (587, 465):
+        # 465 primero: es lo que documenta CDmon (el 25 lo tienen deshabilitado)
+        for host in (SMTP_HOST, f"smtp.{domain}", f"mail.{domain}"):
+            for port in (465, 587):
                 if host and (host, port) not in candidates:
                     candidates.append((host, port))
 
