@@ -131,12 +131,18 @@ def main():
     # Plan A: si el certificado es de otro nombre, probar ESE nombre con validación
     if ok_combo and not ok_combo[2] and cert_names:
         print("\nProbando los nombres del certificado (para no desactivar la validación):")
+        probados = {(h, p) for h, p in candidates}
         for name in cert_names[:5]:
             if "*" in name:
                 continue
-            estado, _ = _try(name, ok_combo[1])
-            if estado == "ok":
-                ok_combo = (name, ok_combo[1], True)
+            for port in (465, 587):
+                if (name, port) in probados:
+                    continue
+                estado, _ = _try(name, port)
+                if estado == "ok":
+                    ok_combo = (name, port, True)
+                    break
+            if ok_combo[2]:
                 break
 
     if not ok_combo:
@@ -152,8 +158,9 @@ def main():
     print(f"SMTP_PORT={port}")
     if not verified:
         print("SMTP_VERIFY_CERT=0")
-        print("  (el servidor presenta el certificado del cluster de CDmon, no el del")
-        print("   dominio; la conexión sigue cifrada pero no se valida el nombre)")
+        print("  (el servidor presenta el certificado del cluster del hosting, no uno")
+        print("   a nombre de este host; se sigue cifrando y validando la cadena, solo")
+        print("   se omite la coincidencia del nombre)")
     if (host, port) != (SMTP_HOST, SMTP_PORT) or not verified:
         print("Copia estas líneas en configuracion/04_email.txt")
 

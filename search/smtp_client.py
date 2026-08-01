@@ -19,15 +19,16 @@ def connect(host: str = "", port: int = 0, timeout: int = 30,
             verify: bool | None = None) -> smtplib.SMTP:
     """Devuelve una conexión SMTP ya autenticada (el llamante hace sendmail/quit).
 
-    verify=False sigue cifrando la conexión, solo se salta la comprobación de
-    que el nombre del certificado coincida con el host (ver SMTP_VERIFY_CERT).
+    verify=False NO desactiva el cifrado ni la validación del certificado: se
+    sigue exigiendo que esté firmado por una CA pública y en vigor. Lo único que
+    se salta es que el nombre del certificado coincida con el host, porque en
+    hosting compartido el servidor presenta el del cluster (ver SMTP_VERIFY_CERT).
     """
     host = host or SMTP_HOST
     port = int(port or SMTP_PORT)
     context = ssl.create_default_context()
     if not (SMTP_VERIFY_CERT if verify is None else verify):
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        context.check_hostname = False  # la cadena se sigue verificando (CERT_REQUIRED)
 
     if port == 465:
         server = smtplib.SMTP_SSL(host, port, timeout=timeout, context=context)
