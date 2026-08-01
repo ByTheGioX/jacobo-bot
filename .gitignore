@@ -26,6 +26,9 @@ data/jacobo_bot.log
 data/processing_report.jsonl
 data/processing_report.log
 
+# Salida de tools/diagnose_wp_listing.py — se regenera en el VPS, mismo problema
+data/wp_diagnostic.csv
+
 # macOS
 .DS_Store
 Proxies/
