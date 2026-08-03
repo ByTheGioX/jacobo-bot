@@ -307,11 +307,12 @@ class Database:
         """Sincroniza la lista de agencias desde la configuración."""
         with self._conn() as conn:
             for ag in agencies:
+                zones_json = json.dumps(ag.get("zones") or [])
                 conn.execute(
-                    """INSERT INTO collaborating_agencies (name, email)
-                       VALUES (?,?)
-                       ON CONFLICT(email) DO UPDATE SET name=excluded.name""",
-                    (ag["name"], ag["email"]),
+                    """INSERT INTO collaborating_agencies (name, email, zones)
+                       VALUES (?,?,?)
+                       ON CONFLICT(email) DO UPDATE SET name=excluded.name, zones=excluded.zones""",
+                    (ag["name"], ag["email"], zones_json),
                 )
 
     def get_active_agencies(self) -> list[dict]:

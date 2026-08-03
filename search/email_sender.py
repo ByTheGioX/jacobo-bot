@@ -17,7 +17,7 @@ from config.settings import (
 from database.db import Database
 from search.email_signature import render as render_signature
 from search.smtp_client import connect as smtp_connect
-from search.smart_search import SearchCriteria
+from search.smart_search import SearchCriteria, _norm
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +117,8 @@ def _agency_matches_zone(agency: dict, location: str) -> bool:
     if not zones:
         return True
 
-    loc = location.lower()
-    return any(z.lower() in loc or loc in z.lower() for z in zones)
+    loc = _norm(location)
+    return any(_norm(z) in loc or loc in _norm(z) for z in zones)
 
 
 class AgencyEmailSender:
@@ -182,9 +182,15 @@ class AgencyEmailSender:
 
         try:
             with smtp_connect() as server:
-                server.sendmail(EMAIL_FROM, [to_email], msg.as_string())
-            logger.info(f"Email enviado a {to_email} ({to_name})")
-            return True
+                # EMAIL_FROM va en la lista de destinatarios (no como header Bcc)
+                # para que reciba copia sin que la agencia la vea en el correo.
+                refused = server.sendmail(EMAIL_FROM, [to_email, EMAIL_FROM], msg.as_string())
         except Exception as e:
             logger.error(f"Error enviando email a {to_email}: {e}")
             return False
+
+        if to_email in refused:
+            logger.error(f"Error enviando email a {to_email}: {refused[to_email]}")
+            return False
+        logger.info(f"Email enviado a {to_email} ({to_name}) — copia a {EMAIL_FROM}")
+        return True
