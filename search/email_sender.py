@@ -22,6 +22,11 @@ from search.smart_search import SearchCriteria, _norm
 
 logger = logging.getLogger(__name__)
 
+# Mismos colores de marca que search/email_signature.py (extraídos de la
+# plantilla del cliente), para que estos correos no desentonen con la firma.
+_VERDE = "#183c3a"
+_ORO = "#98733b"
+
 
 def _format_criteria_text(criteria: SearchCriteria) -> str:
     lines = []
@@ -73,14 +78,14 @@ def _build_email_body(
 <head><meta charset="UTF-8"></head>
 <body style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
 
-<h2 style="color: #2c5282;">Oportunidad de colaboración — {escape(our_agency_name)}</h2>
+<h2 style="color: {_VERDE};">Oportunidad de colaboración — {escape(our_agency_name)}</h2>
 
 <p>Estimado equipo de <strong>{escape(agency_name)}</strong>,</p>
 
 <p>Nos ponemos en contacto desde <strong>{escape(our_agency_name)}</strong> porque tenemos un cliente
 interesado en la <strong>{op}</strong> de una propiedad con las siguientes características:</p>
 
-<div style="background: #f7fafc; border-left: 4px solid #4299e1; padding: 12px 16px; margin: 16px 0;">
+<div style="background: #f7fafc; border-left: 4px solid {_ORO}; padding: 12px 16px; margin: 16px 0;">
 <pre style="font-family: inherit; margin: 0; white-space: pre-wrap;">{criteria_text}</pre>
 </div>
 
@@ -114,13 +119,13 @@ def _build_buyer_confirmation(criteria: SearchCriteria, our_agency_name: str) ->
 <head><meta charset="UTF-8"></head>
 <body style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
 
-<h2 style="color: #2c5282;">Tu búsqueda está en proceso</h2>
+<h2 style="color: {_VERDE};">Tu búsqueda está en proceso</h2>
 
 <p>{saludo}</p>
 
 <p>Hemos recibido tu solicitud de <strong>{op}</strong> con estas características:</p>
 
-<div style="background: #f7fafc; border-left: 4px solid #4299e1; padding: 12px 16px; margin: 16px 0;">
+<div style="background: #f7fafc; border-left: 4px solid {_ORO}; padding: 12px 16px; margin: 16px 0;">
 <pre style="font-family: inherit; margin: 0; white-space: pre-wrap;">{criteria_text}</pre>
 </div>
 
