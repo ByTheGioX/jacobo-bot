@@ -14,6 +14,7 @@ from typing import Optional
 
 from config.settings import (
     EMAIL_FROM, EMAIL_FROM_NAME, COLLABORATING_AGENCIES,
+    MENSAJE_COMPRADOR, MENSAJE_AGENCIA,
 )
 from database.db import Database
 from search.email_signature import render as render_signature
@@ -57,7 +58,6 @@ def _build_email_body(
     our_agency_name: str,
 ) -> tuple[str, str]:
     """Devuelve (subject, body_html)."""
-    op = "alquiler" if criteria.operation == "rent" else "compra"
     # Sin saltos de línea: la location viaja a un header de email (Subject),
     # un \r\n ahí podría inyectar headers/destinatarios extra.
     location_line = (criteria.location or "tu zona").replace("\r", " ").replace("\n", " ")
@@ -82,19 +82,16 @@ def _build_email_body(
 
 <p>Estimado equipo de <strong>{escape(agency_name)}</strong>,</p>
 
-<p>Nos ponemos en contacto desde <strong>{escape(our_agency_name)}</strong> porque tenemos un cliente
-interesado en la <strong>{op}</strong> de una propiedad con las siguientes características:</p>
+<p>{escape(MENSAJE_AGENCIA)}</p>
 
 <div style="background: #f7fafc; border-left: 4px solid {_ORO}; padding: 12px 16px; margin: 16px 0;">
 <pre style="font-family: inherit; margin: 0; white-space: pre-wrap;">{criteria_text}</pre>
 </div>
 
-<p>Si tenéis en cartera alguna propiedad que encaje con estos parámetros,
-os agradeceríamos que nos enviaseis la información a <a href="mailto:{EMAIL_FROM}">{EMAIL_FROM}</a>.</p>
-
 {contact_info}
 
-<p>Quedamos a vuestra disposición para cualquier consulta.</p>
+<p>Podéis responder directamente a este correo (<a href="mailto:{EMAIL_FROM}">{EMAIL_FROM}</a>)
+con lo que tengáis disponible.</p>
 
 <p style="margin-top: 24px;">Un cordial saludo,</p>
 
@@ -108,7 +105,6 @@ os agradeceríamos que nos enviaseis la información a <a href="mailto:{EMAIL_FR
 
 def _build_buyer_confirmation(criteria: SearchCriteria, our_agency_name: str) -> tuple[str, str]:
     """Devuelve (subject, body_html) del email de confirmación al comprador."""
-    op = "alquiler" if criteria.operation == "rent" else "compra"
     subject = f"Hemos recibido tu búsqueda — {our_agency_name}"
     criteria_text = escape(_format_criteria_text(criteria))
     saludo = f"Hola {escape(criteria.contact_name)}," if criteria.contact_name else "Hola,"
@@ -123,14 +119,11 @@ def _build_buyer_confirmation(criteria: SearchCriteria, our_agency_name: str) ->
 
 <p>{saludo}</p>
 
-<p>Hemos recibido tu solicitud de <strong>{op}</strong> con estas características:</p>
+<p>{escape(MENSAJE_COMPRADOR)}</p>
 
 <div style="background: #f7fafc; border-left: 4px solid {_ORO}; padding: 12px 16px; margin: 16px 0;">
 <pre style="font-family: inherit; margin: 0; white-space: pre-wrap;">{criteria_text}</pre>
 </div>
-
-<p>La estamos comparando con nuestro inventario y con nuestras agencias colaboradoras.
-En cuanto tengamos novedades, te contactaremos a este mismo correo.</p>
 
 <p style="margin-top: 24px;">Un cordial saludo,</p>
 

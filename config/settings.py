@@ -169,6 +169,21 @@ FIRMA_ZONA: str = _get("FIRMA_ZONA")
 FIRMA_FOTO_URL: str = _get("FIRMA_FOTO_URL")
 FIRMA_LOGO_URL: str = _get("FIRMA_LOGO_URL")
 
+# Texto editable de los correos automáticos (una sola línea de texto plano,
+# sin HTML ni marcadores — el resto del correo, incluidas las características
+# de la búsqueda, se arma solo). Si no está en el TXT, usa este texto por defecto.
+MENSAJE_COMPRADOR: str = _get(
+    "MENSAJE_COMPRADOR",
+    "Hemos recibido tu solicitud con estas características. La estamos comparando "
+    "con nuestro inventario y con nuestras agencias colaboradoras. En cuanto tengamos "
+    "novedades, te contactaremos a este mismo correo.",
+)
+MENSAJE_AGENCIA: str = _get(
+    "MENSAJE_AGENCIA",
+    "Tenemos un cliente interesado en una propiedad con las siguientes características. "
+    "Si tenéis en cartera algo que encaje, agradeceríamos que nos enviaseis la información.",
+)
+
 # Agencias colaboradoras (desde TXT o .env como fallback)
 _agencies_from_txt = _build_agencies(_TXT)
 if _agencies_from_txt:
