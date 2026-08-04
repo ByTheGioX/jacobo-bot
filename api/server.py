@@ -193,33 +193,51 @@ def _require_secret():
         abort(401)
 
 
+def _criteria_from_result(query: str, name: str, email: str, criteria_dict: dict):
+    from search.smart_search import SearchCriteria
+
+    c = criteria_dict
+    return SearchCriteria(
+        raw_query=query,
+        contact_email=email,
+        contact_name=name,
+        location=c.get("location", ""),
+        zones=c.get("zones") or [],
+        property_type=c.get("property_type", ""),
+        operation=c.get("operation", "sale"),
+        rooms_min=c.get("rooms_min"),
+        rooms_max=c.get("rooms_max"),
+        price_max=c.get("price_max"),
+        area_min=c.get("area_min"),
+        has_parking=bool(c.get("has_parking")),
+        has_pool=bool(c.get("has_pool")),
+        has_terrace=bool(c.get("has_terrace")),
+    )
+
+
 def _send_agency_emails_async(query: str, name: str, email: str, criteria_dict: dict, search_id: int):
     """Envía los emails a agencias en background (SMTP es lento; no bloquear al visitante)."""
     try:
-        from search.smart_search import SearchCriteria
         from search.email_sender import AgencyEmailSender
 
-        c = criteria_dict
-        criteria = SearchCriteria(
-            raw_query=query,
-            contact_email=email,
-            contact_name=name,
-            location=c.get("location", ""),
-            zones=c.get("zones") or [],
-            property_type=c.get("property_type", ""),
-            operation=c.get("operation", "sale"),
-            rooms_min=c.get("rooms_min"),
-            rooms_max=c.get("rooms_max"),
-            price_max=c.get("price_max"),
-            area_min=c.get("area_min"),
-            has_parking=bool(c.get("has_parking")),
-            has_pool=bool(c.get("has_pool")),
-            has_terrace=bool(c.get("has_terrace")),
-        )
+        criteria = _criteria_from_result(query, name, email, criteria_dict)
         AgencyEmailSender().send_to_agencies(criteria, search_id)
         logger.info("Búsqueda '%s' reenviada a agencias (search_id=%s)", query[:50], search_id)
     except Exception:
         logger.exception("Error enviando emails de búsqueda: '%s'", query[:50])
+
+
+def _send_buyer_confirmation_async(query: str, name: str, email: str, criteria_dict: dict):
+    """Avisa al comprador que su búsqueda quedó registrada (SMTP es lento; no bloquear al visitante).
+    Se dispara siempre que dejó un email, haya o no coincidencias en el inventario."""
+    try:
+        from search.email_sender import send_buyer_confirmation
+
+        criteria = _criteria_from_result(query, name, email, criteria_dict)
+        if send_buyer_confirmation(criteria):
+            logger.info("Confirmación enviada al comprador %s", email)
+    except Exception:
+        logger.exception("Error enviando confirmación al comprador: '%s'", query[:50])
 
 
 def _process_search_sync(query: str, name: str, email: str) -> dict:
@@ -230,6 +248,13 @@ def _process_search_sync(query: str, name: str, email: str) -> dict:
 
         searcher = SmartSearch()
         result = searcher.process_query(query, contact_email=email, contact_name=name)
+
+        if email:
+            threading.Thread(
+                target=_send_buyer_confirmation_async,
+                args=(query, name, email, result["criteria"]),
+                daemon=True,
+            ).start()
 
         if result["needs_agency_email"]:
             threading.Thread(
@@ -270,6 +295,9 @@ def _process_search_async(query: str, name: str, email: str):
 
         searcher = SmartSearch()
         result = searcher.process_query(query, contact_email=email, contact_name=name)
+
+        if email:
+            _send_buyer_confirmation_async(query, name, email, result["criteria"])
 
         if result["needs_agency_email"]:
             _send_agency_emails_async(query, name, email, result["criteria"], result["search_id"])

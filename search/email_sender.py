@@ -97,6 +97,80 @@ os agradeceríamos que nos enviaseis la información a <a href="mailto:{EMAIL_FR
     return subject, body
 
 
+def _build_buyer_confirmation(criteria: SearchCriteria, our_agency_name: str) -> tuple[str, str]:
+    """Devuelve (subject, body_html) del email de confirmación al comprador."""
+    op = "alquiler" if criteria.operation == "rent" else "compra"
+    subject = f"Hemos recibido tu búsqueda — {our_agency_name}"
+    criteria_text = _format_criteria_text(criteria)
+    saludo = f"Hola {criteria.contact_name}," if criteria.contact_name else "Hola,"
+
+    body = f"""
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"></head>
+<body style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
+
+<h2 style="color: #2c5282;">Tu búsqueda está en proceso</h2>
+
+<p>{saludo}</p>
+
+<p>Hemos recibido tu solicitud de <strong>{op}</strong> con estas características:</p>
+
+<div style="background: #f7fafc; border-left: 4px solid #4299e1; padding: 12px 16px; margin: 16px 0;">
+<pre style="font-family: inherit; margin: 0; white-space: pre-wrap;">{criteria_text}</pre>
+</div>
+
+<p>La estamos comparando con nuestro inventario y con nuestras agencias colaboradoras.
+En cuanto tengamos novedades, te contactaremos a este mismo correo.</p>
+
+<p style="margin-top: 24px;">Un cordial saludo,</p>
+
+{render_signature()}
+
+</body>
+</html>
+"""
+    return subject, body
+
+
+def _send_with_copy(to_email: str, to_display: str, subject: str, body_html: str, from_name: str) -> bool:
+    """Manda un email HTML a to_email, dejando copia en EMAIL_FROM.
+
+    La copia va como destinatario extra del sobre SMTP, no como header Bcc,
+    para que to_email no la vea en el correo. Un rechazo puntual de to_email
+    (ej. 554 de su servidor) cuenta como fallo aunque la copia sí haya
+    entrado — sendmail() no lanza excepción si solo falla uno de los dos.
+    """
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"{from_name} <{EMAIL_FROM}>"
+    msg["To"] = to_display
+    msg["Reply-To"] = EMAIL_FROM
+    msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+    try:
+        with smtp_connect() as server:
+            refused = server.sendmail(EMAIL_FROM, [to_email, EMAIL_FROM], msg.as_string())
+    except Exception as e:
+        logger.error(f"Error enviando email a {to_email}: {e}")
+        return False
+
+    if to_email in refused:
+        logger.error(f"Error enviando email a {to_email}: {refused[to_email]}")
+        return False
+    logger.info(f"Email enviado a {to_email} — copia a {EMAIL_FROM}")
+    return True
+
+
+def send_buyer_confirmation(criteria: SearchCriteria, our_agency_name: str = EMAIL_FROM_NAME) -> bool:
+    """Avisa al comprador que su búsqueda quedó registrada. Se llama siempre que
+    deja un email en el formulario, haya o no coincidencias en el inventario."""
+    if not criteria.contact_email:
+        return False
+    subject, body_html = _build_buyer_confirmation(criteria, our_agency_name)
+    return _send_with_copy(criteria.contact_email, criteria.contact_email, subject, body_html, our_agency_name)
+
+
 def _agency_matches_zone(agency: dict, location: str) -> bool:
     """
     True si la agencia debe recibir la búsqueda según su zona.
@@ -171,26 +245,4 @@ class AgencyEmailSender:
         our_agency_name: str,
     ) -> bool:
         subject, body_html = _build_email_body(to_name, criteria, our_agency_name)
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"{our_agency_name} <{EMAIL_FROM}>"
-        msg["To"] = f"{to_name} <{to_email}>"
-        msg["Reply-To"] = EMAIL_FROM
-
-        msg.attach(MIMEText(body_html, "html", "utf-8"))
-
-        try:
-            with smtp_connect() as server:
-                # EMAIL_FROM va en la lista de destinatarios (no como header Bcc)
-                # para que reciba copia sin que la agencia la vea en el correo.
-                refused = server.sendmail(EMAIL_FROM, [to_email, EMAIL_FROM], msg.as_string())
-        except Exception as e:
-            logger.error(f"Error enviando email a {to_email}: {e}")
-            return False
-
-        if to_email in refused:
-            logger.error(f"Error enviando email a {to_email}: {refused[to_email]}")
-            return False
-        logger.info(f"Email enviado a {to_email} ({to_name}) — copia a {EMAIL_FROM}")
-        return True
+        return _send_with_copy(to_email, f"{to_name} <{to_email}>", subject, body_html, our_agency_name)
