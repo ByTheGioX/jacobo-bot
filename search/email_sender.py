@@ -9,6 +9,7 @@ import json as _json
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from typing import Optional
 
 from config.settings import (
@@ -52,15 +53,18 @@ def _build_email_body(
 ) -> tuple[str, str]:
     """Devuelve (subject, body_html)."""
     op = "alquiler" if criteria.operation == "rent" else "compra"
-    subject = f"Cliente busca propiedad en {criteria.location or 'tu zona'} — {our_agency_name}"
+    # Sin saltos de línea: la location viaja a un header de email (Subject),
+    # un \r\n ahí podría inyectar headers/destinatarios extra.
+    location_line = (criteria.location or "tu zona").replace("\r", " ").replace("\n", " ")
+    subject = f"Cliente busca propiedad en {location_line} — {our_agency_name}"
 
-    criteria_text = _format_criteria_text(criteria)
+    criteria_text = escape(_format_criteria_text(criteria))
     contact_info = ""
     if criteria.contact_name or criteria.contact_email:
         contact_info = f"""
 <p><strong>Datos de contacto del cliente:</strong><br>
-{"Nombre: " + criteria.contact_name + "<br>" if criteria.contact_name else ""}
-{"Email: " + criteria.contact_email if criteria.contact_email else ""}
+{"Nombre: " + escape(criteria.contact_name) + "<br>" if criteria.contact_name else ""}
+{"Email: " + escape(criteria.contact_email) if criteria.contact_email else ""}
 </p>"""
 
     body = f"""
@@ -69,11 +73,11 @@ def _build_email_body(
 <head><meta charset="UTF-8"></head>
 <body style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
 
-<h2 style="color: #2c5282;">Oportunidad de colaboración — {our_agency_name}</h2>
+<h2 style="color: #2c5282;">Oportunidad de colaboración — {escape(our_agency_name)}</h2>
 
-<p>Estimado equipo de <strong>{agency_name}</strong>,</p>
+<p>Estimado equipo de <strong>{escape(agency_name)}</strong>,</p>
 
-<p>Nos ponemos en contacto desde <strong>{our_agency_name}</strong> porque tenemos un cliente
+<p>Nos ponemos en contacto desde <strong>{escape(our_agency_name)}</strong> porque tenemos un cliente
 interesado en la <strong>{op}</strong> de una propiedad con las siguientes características:</p>
 
 <div style="background: #f7fafc; border-left: 4px solid #4299e1; padding: 12px 16px; margin: 16px 0;">
@@ -101,8 +105,8 @@ def _build_buyer_confirmation(criteria: SearchCriteria, our_agency_name: str) ->
     """Devuelve (subject, body_html) del email de confirmación al comprador."""
     op = "alquiler" if criteria.operation == "rent" else "compra"
     subject = f"Hemos recibido tu búsqueda — {our_agency_name}"
-    criteria_text = _format_criteria_text(criteria)
-    saludo = f"Hola {criteria.contact_name}," if criteria.contact_name else "Hola,"
+    criteria_text = escape(_format_criteria_text(criteria))
+    saludo = f"Hola {escape(criteria.contact_name)}," if criteria.contact_name else "Hola,"
 
     body = f"""
 <!DOCTYPE html>
