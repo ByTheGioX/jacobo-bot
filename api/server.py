@@ -9,6 +9,7 @@ Endpoints:
 Todos los endpoints excepto /dashboard requieren X-API-Secret header (o ?secret=).
 """
 
+import hmac
 import html
 import json
 import logging
@@ -16,6 +17,7 @@ import threading
 from flask import Flask, abort, jsonify, request, Response
 
 from onboarding.registry import validate_idealista_profile_url, register_agency_profile
+from search.spam_guard import is_spam_search
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +40,14 @@ def create_app(secret: str = "", dashboard_password: str = "") -> Flask:
         query = (data.get("query") or "").strip()
         if not query:
             return jsonify({"error": "query requerida"}), 400
-        name = data.get("name", "")
-        email = data.get("email", "")
+        name = (data.get("name") or "").strip()
+        email = (data.get("email") or "").strip()
+        if is_spam_search(query, name, email):
+            logger.warning("Búsqueda descartada como spam (email=%s, name=%r)", email[:80], name[:60])
+            # Misma respuesta que una búsqueda normal: al bot no le decimos que se filtró.
+            if data.get("sync"):
+                return jsonify({"matches": [], "total": 0, "forwarded_to_agencies": False, "criteria": {}}), 200
+            return jsonify({"status": "received"}), 202
         # sync=true (cajita del Home): busca YA y devuelve los resultados para
         # mostrarlos al visitante; los emails a agencias siguen en background.
         if data.get("sync"):
@@ -189,7 +197,7 @@ def _require_secret():
         or request.args.get("secret")
         or (request.get_json(force=True, silent=True) or {}).get("secret")
     )
-    if provided != _SECRET:
+    if not hmac.compare_digest(str(provided or ""), _SECRET):
         abort(401)
 
 
@@ -227,12 +235,34 @@ def _send_agency_emails_async(query: str, name: str, email: str, criteria_dict: 
         logger.exception("Error enviando emails de búsqueda: '%s'", query[:50])
 
 
+def _buyer_confirmation_allowed(email: str) -> bool:
+    """Límites anti-relé de spam: 1 confirmación por email cada 24 h y un tope
+    global por hora. La búsqueda actual ya está guardada, por eso se usa '>'."""
+    from config.settings import (
+        BUYER_CONFIRMATION_ENABLED, BUYER_CONFIRM_PER_EMAIL_24H, BUYER_CONFIRM_MAX_PER_HOUR,
+    )
+    from database.db import Database
+
+    if not BUYER_CONFIRMATION_ENABLED:
+        return False
+    db = Database()
+    if db.count_searches_by_email(email, 24) > BUYER_CONFIRM_PER_EMAIL_24H:
+        logger.warning("Confirmación omitida: %s ya buscó en las últimas 24 h", email)
+        return False
+    if db.count_searches_with_email(1) > BUYER_CONFIRM_MAX_PER_HOUR:
+        logger.warning("Confirmación omitida: tope global de %d/hora alcanzado", BUYER_CONFIRM_MAX_PER_HOUR)
+        return False
+    return True
+
+
 def _send_buyer_confirmation_async(query: str, name: str, email: str, criteria_dict: dict):
     """Avisa al comprador que su búsqueda quedó registrada (SMTP es lento; no bloquear al visitante).
     Se dispara siempre que dejó un email, haya o no coincidencias en el inventario."""
     try:
         from search.email_sender import send_buyer_confirmation
 
+        if not _buyer_confirmation_allowed(email):
+            return
         criteria = _criteria_from_result(query, name, email, criteria_dict)
         if send_buyer_confirmation(criteria):
             logger.info("Confirmación enviada al comprador %s", email)

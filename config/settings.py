@@ -240,6 +240,12 @@ FLASK_PORT: int         = _int("FLASK_PORT", 8080)
 FLASK_SECRET: str       = _get("FLASK_SECRET", "")
 DASHBOARD_PASSWORD: str = _get("DASHBOARD_PASSWORD", "")
 
+# Confirmación al comprador ("Hemos recibido tu búsqueda"). Los bots la usaban
+# como relé de spam: 0 la apaga del todo; los límites frenan el abuso.
+BUYER_CONFIRMATION_ENABLED: bool = _get("BUYER_CONFIRMATION_ENABLED", "1") not in ("0", "false", "no")
+BUYER_CONFIRM_PER_EMAIL_24H: int = _int("BUYER_CONFIRM_PER_EMAIL_24H", 1)
+BUYER_CONFIRM_MAX_PER_HOUR: int  = _int("BUYER_CONFIRM_MAX_PER_HOUR", 15)
+
 # Scraper HTTP headers
 SCRAPER_HEADERS = {
     "User-Agent": (

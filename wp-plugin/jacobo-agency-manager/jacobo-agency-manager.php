@@ -2,7 +2,7 @@
 /**
  * Plugin Name:  Jacobo Agency Manager
  * Description:  Gestiona agencias colaboradoras y altas de Jacobo-Bot, e incluye los shortcodes [jacobo_search_box] (cajita de IA del Home) y [jacobo_onboarding_form] (alta de agencias). Solo subir y activar — sin tocar functions.php.
- * Version:      1.4.1
+ * Version:      1.5.0
  * Requires PHP: 7.4
  * Author:       Jacobo-Bot
  */
@@ -470,6 +470,31 @@ if (!function_exists('jacobo_onboarding_form_render')) {
 if (!function_exists('jacobo_search_box_render')) {
     add_shortcode('jacobo_search_box', 'jacobo_search_box_render');
 
+    /**
+     * Filtro anti-bots de la cajita. El nonce solo no sirve: la Home está en
+     * caché y el bot lo lee del HTML. Los bots usaban el formulario para que el
+     * VPS mandara "Hemos recibido tu búsqueda" con spam a emails de terceros.
+     */
+    function jacobo_search_is_bot(): bool {
+        // Honeypot: campo invisible que una persona nunca rellena.
+        if (trim((string) ($_POST['jacobo_website'] ?? '')) !== '') {
+            return true;
+        }
+        // Lo pone el JS al enviar (y solo si pasaron ≥3 s): quien postea
+        // directo sin ejecutar la página no lo trae.
+        if (($_POST['jacobo_js'] ?? '') !== 'ok') {
+            return true;
+        }
+        // Máx. 3 búsquedas cada 10 min por IP.
+        $key  = 'jacobo_srch_' . md5((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+        $hits = (int) get_transient($key);
+        if ($hits >= 3) {
+            return true;
+        }
+        set_transient($key, $hits + 1, 10 * MINUTE_IN_SECONDS);
+        return false;
+    }
+
     function jacobo_search_box_render(array $atts = []): string {
         $atts = shortcode_atts([
             'titulo'      => '¿No encuentras lo que buscas?',
@@ -495,6 +520,10 @@ if (!function_exists('jacobo_search_box_render')) {
             if ($query === '') {
                 $msg = 'Escribe lo que buscas para poder ayudarte.';
                 $msg_ok = false;
+            } elseif (jacobo_search_is_bot()) {
+                // Mismo mensaje que una búsqueda real, sin llamar al VPS.
+                $msg = '¡Recibido! Estamos procesando tu búsqueda. '
+                     . 'Si dejaste tu email, te contactaremos en cuanto tengamos algo.';
             } elseif (jacobo_api_url() === '') {
                 error_log('[jacobo-bot] jacobo_api_url no configurada (búsqueda Home).');
                 $msg = 'No podemos procesar tu búsqueda ahora mismo. Inténtalo más tarde.';
@@ -591,9 +620,23 @@ if (!function_exists('jacobo_search_box_render')) {
                 <?php endforeach; ?>
             </div>
             <?php endif; ?>
-            <form method="post">
+            <form method="post" id="<?= esc_attr($uid) ?>_form">
                 <?php wp_nonce_field('jacobo_search', 'jacobo_search_nonce'); ?>
                 <input type="hidden" name="jacobo_search_submit" value="1">
+                <input type="hidden" name="jacobo_js" value="">
+                <div aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
+                    <label>Deja este campo vacío <input type="text" name="jacobo_website" tabindex="-1" autocomplete="off"></label>
+                </div>
+                <script>
+                (function(){
+                    var form = document.getElementById(<?= wp_json_encode($uid . '_form') ?>);
+                    if (!form) { return; }
+                    var t0 = Date.now();
+                    form.addEventListener('submit', function(){
+                        if (Date.now() - t0 >= 3000) { form.elements['jacobo_js'].value = 'ok'; }
+                    });
+                })();
+                </script>
                 <div style="position:relative">
                     <textarea id="<?= esc_attr($uid) ?>" name="jacobo_query" rows="3" required
                         placeholder="<?= esc_attr($atts['placeholder']) ?>"

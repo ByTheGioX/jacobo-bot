@@ -284,6 +284,28 @@ class Database:
             )
             return cur.lastrowid
 
+    def count_searches_by_email(self, email: str, hours: int) -> int:
+        """Búsquedas con ese email en las últimas `hours` horas (incluida la actual)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) FROM buyer_searches
+                   WHERE lower(contact_email)=lower(?)
+                     AND created_at >= datetime('now', ?)""",
+                (email, f"-{int(hours)} hours"),
+            ).fetchone()
+            return row[0]
+
+    def count_searches_with_email(self, hours: int) -> int:
+        """Búsquedas que dejaron email en las últimas `hours` horas (límite global)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) FROM buyer_searches
+                   WHERE contact_email IS NOT NULL AND contact_email != ''
+                     AND created_at >= datetime('now', ?)""",
+                (f"-{int(hours)} hours",),
+            ).fetchone()
+            return row[0]
+
     def mark_emails_sent(self, search_id: int, count: int):
         with self._conn() as conn:
             conn.execute(
